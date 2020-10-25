@@ -20,12 +20,12 @@ int WINAPI WinMain(__in HINSTANCE hInstance,
 		qDebug(info.serialNumber().toUtf8().data());
 		QString manufactuer = "Manufacturer: " + info.manufacturer();
 		qDebug(manufactuer.toUtf8().data());
-		if (info.serialNumber() == "COM4")
+		if (info.manufacturer() == "Silicon Labs")
 		{
 			m_reader.setPort(info);
-			m_reader.setParity(QSerialPort::UnknownParity);
-			m_reader.setDataBits(QSerialPort::UnknownDataBits);
-			m_reader.setStopBits(QSerialPort::UnknownStopBits);
+			m_reader.setParity(QSerialPort::NoParity);
+			//m_reader.setDataBits(QSerialPort::UnknownDataBits);
+			//m_reader.setStopBits(QSerialPort::UnknownStopBits);
 			m_reader.setBaudRate(QSerialPort::Baud115200);
 			m_reader.setFlowControl(QSerialPort::NoFlowControl);
 
@@ -35,7 +35,6 @@ int WINAPI WinMain(__in HINSTANCE hInstance,
 		}
 		//qDebug() << "System Location : " << info.systemLocation();
 	}
-	
 
 	app.exec();
 	return 0;

@@ -162,19 +162,10 @@ copy C:\Qt\Qt-5.15.0\bin\Qt5SerialPortd.dll $(TargetDir)</Command>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="framework.h" />
-    <ClInclude Include="Resource.h" />
     <ClInclude Include="SerialPortAssist.h" />
-    <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="SerialPortAssist.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="SerialPortAssist.rc" />
-  </ItemGroup>
-  <ItemGroup>
-    <Image Include="SerialPortAssist.ico" />
-    <Image Include="small.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
