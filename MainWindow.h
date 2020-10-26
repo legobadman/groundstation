@@ -17,7 +17,7 @@ public:
 
 public slots:
 	void onReadyRead();
-	void realtimeDataSlot();
+	void MyRealtimeDataSlot();
 
 protected:
 	void paintEvent(QPaintEvent* event);
@@ -34,6 +34,7 @@ private:
 	QVector<int> m_winX;
 	QList<int> m_winY;
 	QList<int> m_winZ;
+	int m_currIdx;
 	QTimer dataTimer;
 };
 

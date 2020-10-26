@@ -4,6 +4,7 @@
 
 GroundStation::GroundStation(QWidget* parent)
 	: QMainWindow(parent)
+	, m_currIdx(0)
 {
 	init();
 	initPort();
@@ -85,7 +86,7 @@ void GroundStation::setup()
 
 void GroundStation::initPlot()
 {
-	m_plot->xAxis->setRange(0, 50, Qt::AlignLeft);
+	m_plot->xAxis->setRange(0, 500, Qt::AlignLeft);
 	m_plot->yAxis->setRange(0, 65535, Qt::AlignCenter);
 	m_plot->addGraph();
 	m_plot->graph()->setPen(QPen(Qt::blue));
@@ -93,54 +94,13 @@ void GroundStation::initPlot()
 	// make left and bottom axes transfer their ranges to right and top axes:
 	connect(m_plot->xAxis, SIGNAL(rangeChanged(QCPRange)), m_plot->xAxis2, SLOT(setRange(QCPRange)));
 	connect(m_plot->yAxis, SIGNAL(rangeChanged(QCPRange)), m_plot->yAxis2, SLOT(setRange(QCPRange)));
+	connect(&dataTimer, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	dataTimer.start(0);
 }
 
-void GroundStation::realtimeDataSlot()
+void GroundStation::MyRealtimeDataSlot()
 {
-	static QRandomGenerator generator;
-	static QTime startTime(QTime::currentTime());
-	double key = startTime.secsTo(QTime::currentTime());
-	//QElapsedTimer timer;
-	//timer.start();
-
-	//Sleep(3);
-	static double lastPointKey = 0;
-
-	//double key = timer.elapsed();
-	if (key - lastPointKey > 0.002)
-	{
-		// add data to lines:
-		int r1 = generator.generate();
-		double r1_ = r1 / (double)generator.max();
-		m_plot->graph(0)->addData(key, qSin(key) + r1_ * 1 * qSin(key / 0.3843));
-
-		int r2 = generator.generate();
-		double r2_ = r2 / (double)generator.max();
-		m_plot->graph(1)->addData(key, qCos(key) + r2_ * 0.5 * qSin(key / 0.4364));
-		// rescale value (vertical) axis to fit the current data:
-		//ui->customPlot->graph(0)->rescaleValueAxis();
-		//ui->customPlot->graph(1)->rescaleValueAxis(true);
-		lastPointKey = key;
-	}
-
-	// make key axis range scroll with the data (at a constant range size of 8):
-	m_plot->xAxis->setRange(key, 8, Qt::AlignRight);
 	m_plot->replot();
-
-	// calculate frames per second:
-	static double lastFpsKey = 0;
-	static int frameCount;
-	++frameCount;
-	if (key - lastFpsKey > 2) // average fps over 2 seconds
-	{
-		//ui->statusBar->showMessage(
-		//	QString("%1 FPS, Total Data points: %2")
-		//	.arg(frameCount / (key - lastFpsKey), 0, 'f', 0)
-		//	.arg(ui->customPlot->graph(0)->data()->size() + ui->customPlot->graph(1)->data()->size())
-		//	, 0);
-		lastFpsKey = key;
-		frameCount = 0;
-	}
 }
 
 //#define MULTILINE
@@ -166,7 +126,13 @@ void GroundStation::onReadyRead()
 		lastPointKey = key;
 		m_plot->xAxis->setRange(key, L.length() - 2, Qt::AlignRight);
 	}
-	m_plot->replot();
+
+	static double lastFpsKey = 0;
+	if (key - lastFpsKey > 2)
+	{
+		m_plot->replot();
+		lastFpsKey = key;
+	}
 }
 #else
 void GroundStation::onReadyRead()
@@ -174,27 +140,19 @@ void GroundStation::onReadyRead()
 	static QTime startTime(QTime::currentTime());
 	double key = startTime.secsTo(QTime::currentTime());
 	static double lastPointKey = 0;
-	//QByteArray arr = m_serialPort.readAll();
-	//QList<QByteArray> L =  arr.split('\n');
 
 	QByteArray line = m_serialPort.readLine();
 	QString item = line.constData();
-	if (item.startsWith("AC", Qt::CaseInsensitive) && 
-		key - lastPointKey > 0.002)
+	if (item.startsWith("AC", Qt::CaseInsensitive))
 	{
 		QRegExp rx("[^\\d]+");
 		const auto&& parts = item.split(rx, Qt::SkipEmptyParts);
-		//m_accelX.append(parts[0].toInt());
+		int x = parts[0].toInt();
+		m_accelX.append(x);
 		//m_accelY.append(parts[1].toInt());
-		//m_accelZ.append(parts[2].toInt());
-		
-		m_plot->graph(0)->addData(key, parts[0].toInt());
-		//m_plot->graph(0)->addData(1, m_accelX[0]);
-		//m_plot->graph(0)->addData(1, m_accelX[0]);
-		lastPointKey = key;
+		//m_accelZ.append(parts[2].toInt());		
+		m_plot->graph(0)->addData(m_currIdx++, x);
 	}
-
-	m_plot->xAxis->setRange(key, 1000, Qt::AlignRight);
-	m_plot->replot(QCustomPlot::rpQueuedReplot);
+	m_plot->xAxis->setRange(m_currIdx, 100, Qt::AlignRight);
 }
 #endif
