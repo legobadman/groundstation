@@ -54,11 +54,6 @@ void GroundStation::initPort()
 
 void GroundStation::paintEvent(QPaintEvent* event)
 {
-	if (false)
-	{
-		m_serialPort.isOpen();
-		m_serialPort.openMode();
-	}
 	QMainWindow::paintEvent(event);
 }
 
@@ -81,12 +76,12 @@ void GroundStation::setup()
 
 	// setup a timer that repeatedly calls MainWindow::realtimeDataSlot:
 	connect(&dataTimer, SIGNAL(timeout()), this, SLOT(realtimeDataSlot()));
-	dataTimer.start(0); // Interval 0 means to refresh as fast as possible
+	dataTimer.start(200); // Interval 0 means to refresh as fast as possible
 }
 
 void GroundStation::initPlot()
 {
-	m_plot->xAxis->setRange(0, 500, Qt::AlignLeft);
+	m_plot->xAxis->setRange(0, 2000, Qt::AlignCenter);
 	m_plot->yAxis->setRange(0, 65535, Qt::AlignCenter);
 	m_plot->addGraph();
 	m_plot->graph()->setPen(QPen(Qt::blue));
@@ -100,6 +95,7 @@ void GroundStation::initPlot()
 
 void GroundStation::MyRealtimeDataSlot()
 {
+	m_plot->xAxis->setRange(m_currIdx, 2000, Qt::AlignRight);
 	m_plot->replot();
 }
 
@@ -153,6 +149,6 @@ void GroundStation::onReadyRead()
 		//m_accelZ.append(parts[2].toInt());		
 		m_plot->graph(0)->addData(m_currIdx++, x);
 	}
-	m_plot->xAxis->setRange(m_currIdx, 100, Qt::AlignRight);
+
 }
 #endif
