@@ -12,19 +12,22 @@ public:
 	~GroundStation();
 	void init();
 	void initPort();
-	void initPlot();
-	void setup();
+	void initAccelPlot();
+	void initGyroPlot();
 
 public slots:
 	void onReadyRead();
 	void MyRealtimeDataSlot();
+	void onAccelTimeout();
+	void onGyroTimeout();
 
 protected:
 	void paintEvent(QPaintEvent* event);
 
 private:
 	QTextBrowser* m_pTextBrowser;
-	QCustomPlot* m_plot;
+	QCustomPlot* m_gyro;
+	QCustomPlot* m_accel;
 	QSerialPort m_serialPort;
 	QString m_msgStream;
 	QList<int> m_accelX;
@@ -35,7 +38,8 @@ private:
 	QList<int> m_winY;
 	QList<int> m_winZ;
 	int m_currIdx;
-	QTimer dataTimer;
+	QTimer dtaccel;
+	QTimer dtgyro;
 };
 
 

@@ -2,14 +2,22 @@
 #include "MainWindow.h"
 #include "moc_MainWindow.cpp"
 
+#define X_ACCEL_ORI 0
+#define Y_ACCEL_ORI 1
+#define Z_ACCEL_ORI 2
+#define X_GYRO_ORI 0
+#define Y_GYRO_ORI 1
+#define Z_GYRO_ORI 2
+
+
 GroundStation::GroundStation(QWidget* parent)
 	: QMainWindow(parent)
 	, m_currIdx(0)
 {
 	init();
 	initPort();
-	initPlot();
-	//setup();
+	initAccelPlot();
+	initGyroPlot();
 }
 
 GroundStation::~GroundStation()
@@ -18,17 +26,22 @@ GroundStation::~GroundStation()
 
 void GroundStation::init()
 {
-	QSpacerItem* pHorizontalSpacer = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
-	
-	m_plot = new QCustomPlot(this);
+	m_accel = new QCustomPlot(this);
+	m_gyro = new QCustomPlot(this);
 	QHBoxLayout* pHLayout = new QHBoxLayout;
-	pHLayout->addWidget(m_plot);
-	//pHLayout->addSpacerItem(pHorizontalSpacer);
 
 	//m_pTextBrowser = new QTextBrowser(this);
-	//m_pTextBrowser->setText("fewfewfwe");
+	//m_pTextBrowser->setText("");
 	//pHLayout->addWidget(m_pTextBrowser);
 	
+	//QSpacerItem* pHorizontalSpacer = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+	//pHLayout->addSpacerItem(pHorizontalSpacer);
+
+	QVBoxLayout* pVLayout = new QVBoxLayout;
+	pVLayout->addWidget(m_accel);
+	pVLayout->addWidget(m_gyro);
+	pHLayout->addLayout(pVLayout);
+
 	QWidget* pCentralWidget = new QWidget(this);
 	pCentralWidget->setLayout(pHLayout);
 	this->setCentralWidget(pCentralWidget);
@@ -52,107 +65,99 @@ void GroundStation::initPort()
 	}
 }
 
+void GroundStation::onAccelTimeout()
+{
+	m_accel->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+	m_accel->replot(QCustomPlot::rpQueuedReplot);
+}
+
+void GroundStation::onGyroTimeout()
+{
+	m_gyro->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+	m_gyro->replot(QCustomPlot::rpQueuedReplot);
+}
+
 void GroundStation::paintEvent(QPaintEvent* event)
 {
 	QMainWindow::paintEvent(event);
 }
 
-void GroundStation::setup()
+void GroundStation::initAccelPlot()
 {
-	m_plot->addGraph(); // blue line
-	m_plot->graph(0)->setPen(QPen(QColor(40, 110, 255)));
-	m_plot->addGraph(); // red line
-	m_plot->graph(1)->setPen(QPen(QColor(255, 110, 40)));
+	m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
+	m_accel->addGraph();
+	m_accel->graph()->setPen(QPen(Qt::blue));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
 
-	QSharedPointer<QCPAxisTickerTime> timeTicker(new QCPAxisTickerTime);
-	timeTicker->setTimeFormat("%h:%m:%s");
-	m_plot->xAxis->setTicker(timeTicker);
-	m_plot->axisRect()->setupFullAxesBox();
-	m_plot->yAxis->setRange(-1.2, 1.2);
+	m_accel->addGraph();
+	m_accel->graph()->setPen(QPen(Qt::red));
 
+	m_accel->addGraph();
+	m_accel->graph()->setPen(QPen(Qt::green));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
 	// make left and bottom axes transfer their ranges to right and top axes:
-	connect(m_plot->xAxis, SIGNAL(rangeChanged(QCPRange)), m_plot->xAxis2, SLOT(setRange(QCPRange)));
-	connect(m_plot->yAxis, SIGNAL(rangeChanged(QCPRange)), m_plot->yAxis2, SLOT(setRange(QCPRange)));
-
-	// setup a timer that repeatedly calls MainWindow::realtimeDataSlot:
-	connect(&dataTimer, SIGNAL(timeout()), this, SLOT(realtimeDataSlot()));
-	dataTimer.start(200); // Interval 0 means to refresh as fast as possible
+	connect(m_accel->xAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->xAxis2, SLOT(setRange(QCPRange)));
+	connect(m_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->yAxis2, SLOT(setRange(QCPRange)));
+	connect(&dtaccel, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	dtaccel.start(0);
 }
 
-void GroundStation::initPlot()
+void GroundStation::initGyroPlot()
 {
-	//m_plot->xAxis->setRange(0, 500, Qt::AlignCenter);
-	m_plot->yAxis->setRange(0, 65535, Qt::AlignCenter);
-	m_plot->addGraph();
-	m_plot->graph()->setPen(QPen(Qt::blue));
-	m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+	m_gyro->yAxis->setRange(0, 1000, Qt::AlignCenter);
+	m_gyro->addGraph();
+	m_gyro->graph()->setPen(QPen(Qt::blue));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+
+	m_gyro->addGraph();
+	m_gyro->graph()->setPen(QPen(Qt::red));
+
+	m_gyro->addGraph();
+	m_gyro->graph()->setPen(QPen(Qt::green));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
 	// make left and bottom axes transfer their ranges to right and top axes:
-	connect(m_plot->xAxis, SIGNAL(rangeChanged(QCPRange)), m_plot->xAxis2, SLOT(setRange(QCPRange)));
-	connect(m_plot->yAxis, SIGNAL(rangeChanged(QCPRange)), m_plot->yAxis2, SLOT(setRange(QCPRange)));
-	connect(&dataTimer, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
-	dataTimer.start(0);
+	connect(m_gyro->xAxis, SIGNAL(rangeChanged(QCPRange)), m_gyro->xAxis2, SLOT(setRange(QCPRange)));
+	connect(m_gyro->yAxis, SIGNAL(rangeChanged(QCPRange)), m_gyro->yAxis2, SLOT(setRange(QCPRange)));
+	connect(&dtgyro, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	dtgyro.start(0);
 }
 
 void GroundStation::MyRealtimeDataSlot()
 {
-	m_plot->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
-	m_plot->replot(QCustomPlot::rpQueuedReplot);
+	m_accel->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+	m_accel->replot(QCustomPlot::rpQueuedReplot);
+
+	m_gyro->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+	m_gyro->replot(QCustomPlot::rpQueuedReplot);
 }
 
-//#define MULTILINE
-
-#ifdef MULTILINE
 void GroundStation::onReadyRead()
 {
-	static QTime startTime(QTime::currentTime());
-	double key = startTime.secsTo(QTime::currentTime());
-	static double lastPointKey = 0;
-	
-	QByteArray arr = m_serialPort.readAll();
-	if (key - lastPointKey > 0.002)
-	{
-		QList<QByteArray> L = arr.split('\n');
-		for (int i = 1; i < L.length() - 1; i++)
-		{
-			QString item = L[i].constData();
-			QRegExp rx("[^\\d]+");
-			const auto&& parts = item.split(rx, Qt::SkipEmptyParts);
-			m_plot->graph(0)->addData(key + i, parts[0].toInt());
-		}
-		lastPointKey = key;
-		m_plot->xAxis->setRange(key, L.length() - 2, Qt::AlignRight);
-	}
-
-	static double lastFpsKey = 0;
-	if (key - lastFpsKey > 2)
-	{
-		m_plot->replot();
-		lastFpsKey = key;
-	}
-}
-#else
-void GroundStation::onReadyRead()
-{
-	static const int nBuffer = 5;
+	static const int nBuffer = 1;
 	static int temp = 0;
 	QByteArray line = m_serialPort.readLine();
 	QString item = line.constData();
-	if (item.startsWith("AC", Qt::CaseInsensitive))
-	{
-		QRegExp rx("[^\\d]+");
-		const auto&& parts = item.split(rx, Qt::SkipEmptyParts);
-		int x = parts[0].toInt();
-		temp += x;
-		m_accelX.append(x);
-		//m_accelY.append(parts[1].toInt());
-		//m_accelZ.append(parts[2].toInt());
-		if (m_currIdx % nBuffer == 0)
-		{
-			m_plot->graph(0)->addData(m_currIdx++, temp / nBuffer);
-			temp = 0;
-		}
-		m_currIdx++;
-	}
+	const auto&& parts = item.split(',');
+	if (parts.length() != 6)
+		return;
+	
+	int x_accel = parts[0].toDouble();
+	int y_accel = parts[1].toDouble();
+	int z_accel = parts[2].toDouble();
+	int x_gyro = parts[3].toDouble();
+	int y_gyro = parts[4].toDouble();
+	int z_gyro = parts[5].toDouble();
 
+	if (m_currIdx % nBuffer == 0)
+	{
+		m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_accel);
+		m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_accel);
+		m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_accel);
+
+		m_gyro->graph(X_GYRO_ORI)->addData(m_currIdx, x_gyro);
+		m_gyro->graph(Y_GYRO_ORI)->addData(m_currIdx, y_gyro);
+		m_gyro->graph(Z_GYRO_ORI)->addData(m_currIdx, z_gyro);
+		temp = 0;
+	}
+	m_currIdx++;
 }
-#endif
