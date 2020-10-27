@@ -7,6 +7,13 @@
 class GroundStation : public QMainWindow
 {
 	Q_OBJECT
+	enum ZeroPadding
+	{
+		NO_ZEROPAD,
+		ZEROPADDING,
+		ZEROPADDED,
+	};
+
 public:
 	GroundStation(QWidget* parent);
 	~GroundStation();
@@ -20,26 +27,31 @@ public slots:
 	void MyRealtimeDataSlot();
 	void onAccelTimeout();
 	void onGyroTimeout();
+	void prepare_zeropadding(bool);
+	void calculated_zeropad();
 
 protected:
 	void paintEvent(QPaintEvent* event);
 
 private:
 	QTextBrowser* m_pTextBrowser;
+	QCheckBox* cbXAccel, *cbYAccel, *cbZAccel, *cbZeroPadAccel, *cbUnitAccel, *cbXGyro, *cbYGyro, *cbZGyro, *cbZeroPadGyro, *cbUnitGyro;
+
 	QCustomPlot* m_gyro;
 	QCustomPlot* m_accel;
 	QSerialPort m_serialPort;
 	QString m_msgStream;
-	QList<int> m_accelX;
-	QList<int> m_accelY;
-	QList<int> m_accelZ;
-
-	QVector<int> m_winX;
-	QList<int> m_winY;
-	QList<int> m_winZ;
+	QVector<int> m_accelX;
+	QVector<int> m_accelY;
+	QVector<int> m_accelZ;
+	QVector<int> m_gyroX;
+	QVector<int> m_gyroY;
+	QVector<int> m_gyroZ;
 	int m_currIdx;
 	QTimer dtaccel;
 	QTimer dtgyro;
+	QTimer zeropad_timer;
+	ZeroPadding zeropad;
 };
 
 
