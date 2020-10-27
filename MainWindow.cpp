@@ -81,7 +81,7 @@ void GroundStation::setup()
 
 void GroundStation::initPlot()
 {
-	m_plot->xAxis->setRange(0, 2000, Qt::AlignCenter);
+	//m_plot->xAxis->setRange(0, 500, Qt::AlignCenter);
 	m_plot->yAxis->setRange(0, 65535, Qt::AlignCenter);
 	m_plot->addGraph();
 	m_plot->graph()->setPen(QPen(Qt::blue));
@@ -95,8 +95,8 @@ void GroundStation::initPlot()
 
 void GroundStation::MyRealtimeDataSlot()
 {
-	m_plot->xAxis->setRange(m_currIdx, 2000, Qt::AlignRight);
-	m_plot->replot();
+	m_plot->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+	m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
 //#define MULTILINE
@@ -133,10 +133,8 @@ void GroundStation::onReadyRead()
 #else
 void GroundStation::onReadyRead()
 {
-	static QTime startTime(QTime::currentTime());
-	double key = startTime.secsTo(QTime::currentTime());
-	static double lastPointKey = 0;
-
+	static const int nBuffer = 5;
+	static int temp = 0;
 	QByteArray line = m_serialPort.readLine();
 	QString item = line.constData();
 	if (item.startsWith("AC", Qt::CaseInsensitive))
@@ -144,10 +142,16 @@ void GroundStation::onReadyRead()
 		QRegExp rx("[^\\d]+");
 		const auto&& parts = item.split(rx, Qt::SkipEmptyParts);
 		int x = parts[0].toInt();
+		temp += x;
 		m_accelX.append(x);
 		//m_accelY.append(parts[1].toInt());
-		//m_accelZ.append(parts[2].toInt());		
-		m_plot->graph(0)->addData(m_currIdx++, x);
+		//m_accelZ.append(parts[2].toInt());
+		if (m_currIdx % nBuffer == 0)
+		{
+			m_plot->graph(0)->addData(m_currIdx++, temp / nBuffer);
+			temp = 0;
+		}
+		m_currIdx++;
 	}
 
 }
