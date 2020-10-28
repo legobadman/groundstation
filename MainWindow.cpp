@@ -16,11 +16,13 @@ GroundStation::GroundStation(QWidget* parent)
 	: QMainWindow(parent)
 	, m_currIdx(0)
 	, zeropad(NO_ZEROPAD)
+	, m_plottype(ORIGINAL)
 {
 	init();
 	initPort();
 	initAccelPlot();
 	initGyroPlot();
+	initAnglePlot();
 }
 
 GroundStation::~GroundStation()
@@ -30,9 +32,9 @@ GroundStation::~GroundStation()
 void GroundStation::init()
 {
 	m_accel = new QCustomPlot(this);
-	m_accel->setMinimumWidth(800);
-	//m_accel->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+	m_accel->setMinimumWidth(400);
 	m_gyro = new QCustomPlot(this);
+	m_angle = new QCustomPlot(this);
 	QHBoxLayout* pMainLayout = new QHBoxLayout;
 
 	QVBoxLayout* pLeftLayout = new QVBoxLayout;
@@ -45,9 +47,6 @@ void GroundStation::init()
 	m_pTextBrowser->setText("");
 	pMainLayout->addWidget(m_pTextBrowser);
 	
-	//QSpacerItem* pHorizontalSpacer = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
-	//pHLayout->addSpacerItem(pHorizontalSpacer);
-
 	QVBoxLayout* pVLayout = new QVBoxLayout;
 	pVLayout->addWidget(m_accel);
 	{
@@ -55,17 +54,27 @@ void GroundStation::init()
 		cbXAccel = new QCheckBox(u8"X轴");
 		cbYAccel = new QCheckBox(u8"Y轴");
 		cbZAccel = new QCheckBox(u8"Z轴");
-		cbZeroPadAccel = new QCheckBox(u8"零点漂移");
-		cbUnitAccel = new QCheckBox(u8"单位换算(g)");
 		cbXAccel->setChecked(true);
 		cbYAccel->setChecked(true);
 		cbZAccel->setChecked(true);
 
+		QButtonGroup* pButtonGroup = new QButtonGroup(this);
+		pButtonGroup->setExclusive(true);
+		QRadioButton* pOriButton = new QRadioButton(u8"原始数据", this);
+		QRadioButton* pUnitButton = new QRadioButton(u8"单位换算", this);
+		QRadioButton* pZeroButton = new QRadioButton(u8"零点漂移", this);
+		pOriButton->setChecked(true);
+		pButtonGroup->addButton(pOriButton);
+		pButtonGroup->addButton(pUnitButton);
+		pButtonGroup->addButton(pZeroButton);
+		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotTypeChanged(QAbstractButton*)));
+
 		pAccelHLayout->addWidget(cbXAccel);
 		pAccelHLayout->addWidget(cbYAccel);
 		pAccelHLayout->addWidget(cbZAccel);
-		pAccelHLayout->addWidget(cbZeroPadAccel);
-		pAccelHLayout->addWidget(cbUnitAccel);
+		pAccelHLayout->addWidget(pOriButton);
+		pAccelHLayout->addWidget(pZeroButton);
+		pAccelHLayout->addWidget(pUnitButton);
 		pVLayout->addLayout(pAccelHLayout);
 	}
 
@@ -75,19 +84,31 @@ void GroundStation::init()
 		cbXGyro = new QCheckBox(u8"X轴");
 		cbYGyro = new QCheckBox(u8"Y轴");
 		cbZGyro = new QCheckBox(u8"Z轴");
-		cbZeroPadGyro = new QCheckBox(u8"零点漂移");
-		cbUnitGyro = new QCheckBox(u8"单位换算(g)");
 		cbXGyro->setChecked(true);
 		cbYGyro->setChecked(true);
 		cbZGyro->setChecked(true);
 
+		QButtonGroup* pButtonGroup = new QButtonGroup(this);
+		pButtonGroup->setExclusive(true);
+		QRadioButton* pOriButton = new QRadioButton(u8"原始数据", this);
+		QRadioButton* pZeroButton = new QRadioButton(u8"零点漂移", this);
+		QRadioButton* pUnitButton = new QRadioButton(u8"单位换算", this);
+		
+		pOriButton->setChecked(true);
+		pButtonGroup->addButton(pOriButton);
+		pButtonGroup->addButton(pUnitButton);
+		pButtonGroup->addButton(pZeroButton);
+		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotTypeChanged(QAbstractButton*)));
+
 		pGyroHLayout->addWidget(cbXGyro);
 		pGyroHLayout->addWidget(cbYGyro);
 		pGyroHLayout->addWidget(cbZGyro);
-		pGyroHLayout->addWidget(cbZeroPadGyro);
-		pGyroHLayout->addWidget(cbUnitGyro);
+		pGyroHLayout->addWidget(pOriButton);
+		pGyroHLayout->addWidget(pZeroButton);
+		pGyroHLayout->addWidget(pUnitButton);
 		pVLayout->addLayout(pGyroHLayout);
 	}
+	pVLayout->addWidget(m_angle);
 
 	pMainLayout->addLayout(pVLayout);
 
@@ -95,6 +116,25 @@ void GroundStation::init()
 	pCentralWidget->setLayout(pMainLayout);
 	this->setCentralWidget(pCentralWidget);
 	this->resize(1304, 691);
+}
+
+void GroundStation::onPlotTypeChanged(QAbstractButton* pClickedButton)
+{
+	if (pClickedButton->text() == u8"原始数据")
+	{
+		m_plottype = ORIGINAL;
+		m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
+	}
+	else if (pClickedButton->text() == u8"单位换算")
+	{
+		m_plottype = UnitTransfer;
+		m_accel->yAxis->setRange(0, 4, Qt::AlignCenter);
+	}
+	else if (pClickedButton->text() == u8"倾斜角表示")
+	{
+		m_plottype = Angle;
+		m_accel->yAxis->setRange(0, 360, Qt::AlignCenter);
+	}
 }
 
 void GroundStation::initPort()
@@ -171,6 +211,26 @@ void GroundStation::initGyroPlot()
 	dtgyro.start(0);
 }
 
+void GroundStation::initAnglePlot()
+{
+	m_angle->yAxis->setRange(0, 360, Qt::AlignCenter);
+	m_angle->addGraph();
+	m_angle->graph()->setPen(QPen(Qt::blue));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+
+	m_angle->addGraph();
+	m_angle->graph()->setPen(QPen(Qt::red));
+
+	m_angle->addGraph();
+	m_angle->graph()->setPen(QPen(Qt::green));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+	// make left and bottom axes transfer their ranges to right and top axes:
+	connect(m_angle->xAxis, SIGNAL(rangeChanged(QCPRange)), m_angle->xAxis2, SLOT(setRange(QCPRange)));
+	connect(m_angle->yAxis, SIGNAL(rangeChanged(QCPRange)), m_angle->yAxis2, SLOT(setRange(QCPRange)));
+	connect(&dtangle, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	dtangle.start(0);
+}
+
 void GroundStation::MyRealtimeDataSlot()
 {
 	m_accel->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
@@ -178,6 +238,9 @@ void GroundStation::MyRealtimeDataSlot()
 
 	m_gyro->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
 	m_gyro->replot(QCustomPlot::rpQueuedReplot);
+
+	m_angle->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+	m_angle->replot(QCustomPlot::rpQueuedReplot);
 }
 
 void GroundStation::prepare_zeropadding(bool)
@@ -235,6 +298,8 @@ void GroundStation::onReadyRead()
 	qint16 x_gyro = parts[3].toInt();
 	qint16 y_gyro = parts[4].toInt();
 	qint16 z_gyro = parts[5].toInt();
+	double x_a = 0, y_a = 0, z_a = 0;
+	double x_g = 0, y_g = 0, z_g = 0;
 
 	switch (zeropad)
 	{
@@ -243,19 +308,54 @@ void GroundStation::onReadyRead()
 	{
 		if (m_currIdx % nBuffer == 0)
 		{
+			x_a = x_accel - zeropadding_offset[X_ACCEL_ORI];
+			y_a = y_accel - zeropadding_offset[Y_ACCEL_ORI];
+			z_a = z_accel - zeropadding_offset[Z_ACCEL_ORI] + 8192;
+			x_g = x_gyro - zeropadding_offset[X_GYRO_ORI];
+			y_g = y_gyro - zeropadding_offset[Y_GYRO_ORI];
+			z_g = z_gyro - zeropadding_offset[Z_GYRO_ORI];
+
+			if (ORIGINAL < m_plottype)
+			{
+				//根据设定的量程换算单位。
+				x_a /= 8192.0f;
+				y_a /= 8192.0f;
+				z_a /= 8192.0f;
+				x_g /= 16.384f;
+				y_g /= 16.384f;
+				z_g /= 16.384f;
+				//更换纵坐标的量程。
+				if (Angle == m_plottype)
+				{
+					
+				}
+			}
+
 			if (cbXAccel->isChecked())
-				m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_accel - zeropadding_offset[X_ACCEL_ORI]);
+			{
+				m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_a);
+			}
 			if (cbYAccel->isChecked())
-				m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_accel - zeropadding_offset[Y_ACCEL_ORI]);
+			{
+				m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_a);
+			}
 			if (cbZAccel->isChecked())
-				m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_accel - zeropadding_offset[Z_ACCEL_ORI] + 8192);
+			{
+				m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_a);
+			}
 			//m_pTextBrowser->append("Hello, World");
 			if (cbXGyro->isChecked())
-				m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_gyro - zeropadding_offset[X_GYRO_ORI]);
+			{
+				m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_g);
+			}
 			if (cbYGyro->isChecked())
-				m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_gyro - zeropadding_offset[Y_GYRO_ORI]);
+			{
+				m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_g);
+			}
 			if (cbZGyro->isChecked())
-				m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_gyro - zeropadding_offset[Z_GYRO_ORI]);
+			{
+				m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_g);
+			}
 			temp = 0;
 		}
 		break;

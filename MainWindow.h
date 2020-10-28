@@ -13,6 +13,12 @@ class GroundStation : public QMainWindow
 		ZEROPADDING,
 		ZEROPADDED,
 	};
+	enum PlotType
+	{
+		ORIGINAL,		//MPU6050原始数据
+		UnitTransfer,	//经单位换算以后的数据
+		Angle,			//倾斜角
+	};
 
 public:
 	GroundStation(QWidget* parent);
@@ -21,6 +27,7 @@ public:
 	void initPort();
 	void initAccelPlot();
 	void initGyroPlot();
+	void initAnglePlot();
 
 public slots:
 	void onReadyRead();
@@ -29,6 +36,7 @@ public slots:
 	void onGyroTimeout();
 	void prepare_zeropadding(bool);
 	void calculated_zeropad();
+	void onPlotTypeChanged(QAbstractButton* pClickedButton);
 
 protected:
 	void paintEvent(QPaintEvent* event);
@@ -39,6 +47,7 @@ private:
 
 	QCustomPlot* m_gyro;
 	QCustomPlot* m_accel;
+	QCustomPlot* m_angle;
 	QSerialPort m_serialPort;
 	QString m_msgStream;
 	QVector<int> m_accelX;
@@ -50,8 +59,10 @@ private:
 	int m_currIdx;
 	QTimer dtaccel;
 	QTimer dtgyro;
+	QTimer dtangle;
 	QTimer zeropad_timer;
 	ZeroPadding zeropad;
+	PlotType m_plottype;
 };
 
 
