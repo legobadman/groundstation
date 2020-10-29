@@ -2,6 +2,14 @@
 #include "MainWindow.h"
 #include "moc_MainWindow.cpp"
 
+const float dt = 0.005; //时间周期
+float angle[3] = { 0 };
+
+const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
+
+#define MIN std::min
+#define MAX std::max
+
 #define X_ACCEL_ORI 0
 #define Y_ACCEL_ORI 1
 #define Z_ACCEL_ORI 2
@@ -9,14 +17,22 @@
 #define Y_GYRO_ORI 4
 #define Z_GYRO_ORI 5
 
-static qint16 zeropadding_offset[6] = { 0 };
+static qint16 zeropadding_offset[6] = {
+	14535,
+	7921,
+	21912,
+	53,
+	-264,
+	-145
+};
 
 
 GroundStation::GroundStation(QWidget* parent)
 	: QMainWindow(parent)
 	, m_currIdx(0)
 	, zeropad(NO_ZEROPAD)
-	, m_plottype(ORIGINAL)
+	, m_plotAccel(ORIGINAL)
+	, m_plotGyro(ORIGINAL)
 {
 	init();
 	initPort();
@@ -67,7 +83,7 @@ void GroundStation::init()
 		pButtonGroup->addButton(pOriButton);
 		pButtonGroup->addButton(pUnitButton);
 		pButtonGroup->addButton(pZeroButton);
-		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotTypeChanged(QAbstractButton*)));
+		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotAccelChanged(QAbstractButton*)));
 
 		pAccelHLayout->addWidget(cbXAccel);
 		pAccelHLayout->addWidget(cbYAccel);
@@ -98,7 +114,7 @@ void GroundStation::init()
 		pButtonGroup->addButton(pOriButton);
 		pButtonGroup->addButton(pUnitButton);
 		pButtonGroup->addButton(pZeroButton);
-		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotTypeChanged(QAbstractButton*)));
+		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotGyroChanged(QAbstractButton*)));
 
 		pGyroHLayout->addWidget(cbXGyro);
 		pGyroHLayout->addWidget(cbYGyro);
@@ -118,22 +134,41 @@ void GroundStation::init()
 	this->resize(1304, 691);
 }
 
-void GroundStation::onPlotTypeChanged(QAbstractButton* pClickedButton)
+void GroundStation::onPlotAccelChanged(QAbstractButton* pClickedButton)
 {
 	if (pClickedButton->text() == u8"原始数据")
 	{
-		m_plottype = ORIGINAL;
+		m_plotAccel = ORIGINAL;
 		m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
 	}
 	else if (pClickedButton->text() == u8"单位换算")
 	{
-		m_plottype = UnitTransfer;
+		m_plotAccel = UnitTransfer;
 		m_accel->yAxis->setRange(0, 4, Qt::AlignCenter);
 	}
-	else if (pClickedButton->text() == u8"倾斜角表示")
+	else if (pClickedButton->text() == u8"零点漂移")
 	{
-		m_plottype = Angle;
-		m_accel->yAxis->setRange(0, 360, Qt::AlignCenter);
+		m_plotAccel = ZeroPad;
+		m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
+	}
+}
+
+void GroundStation::onPlotGyroChanged(QAbstractButton* pClickedButton)
+{
+	if (pClickedButton->text() == u8"原始数据")
+	{
+		m_plotGyro = ORIGINAL;
+		m_gyro->yAxis->setRange(0, 65535, Qt::AlignCenter);
+	}
+	else if (pClickedButton->text() == u8"单位换算")
+	{
+		m_plotGyro = UnitTransfer;
+		m_gyro->yAxis->setRange(0, 360, Qt::AlignCenter);
+	}
+	else if (pClickedButton->text() == u8"零点漂移")
+	{
+		m_plotGyro = ZeroPad;
+		m_gyro->yAxis->setRange(0, 1000, Qt::AlignCenter);
 	}
 }
 
@@ -285,7 +320,8 @@ void GroundStation::calculated_zeropad()
 void GroundStation::onReadyRead()
 {
 	static const int nBuffer = 4;
-	static int temp = 0;
+	static float angle_last[3] = { 0 };
+	float temp[3] = { 0 };
 	QByteArray line = m_serialPort.readLine();
 	QString item = line.constData();
 	const auto&& parts = item.split(',');
@@ -298,8 +334,19 @@ void GroundStation::onReadyRead()
 	qint16 x_gyro = parts[3].toInt();
 	qint16 y_gyro = parts[4].toInt();
 	qint16 z_gyro = parts[5].toInt();
-	double x_a = 0, y_a = 0, z_a = 0;
-	double x_g = 0, y_g = 0, z_g = 0;
+	double x_a = x_accel - zeropadding_offset[X_ACCEL_ORI];
+	double y_a = y_accel - zeropadding_offset[Y_ACCEL_ORI];
+	double z_a = z_accel - zeropadding_offset[Z_ACCEL_ORI] + 8192.0f;
+	double x_g = x_gyro - zeropadding_offset[X_GYRO_ORI];
+	double y_g = y_gyro - zeropadding_offset[Y_GYRO_ORI];
+	double z_g = z_gyro - zeropadding_offset[Z_GYRO_ORI];
+	double X_Angle = 0, Y_Angle = 0, Z_Angle = 0;
+	double x_a_ = x_a / 8192.0f;
+	double y_a_ = y_a / 8192.0f;
+	double z_a_ = z_a / 8192.0f;
+	double x_g_ = x_g / 16.384f;
+	double y_g_ = y_g / 16.384f;
+	double z_g_ = z_g / 16.384f;
 
 	switch (zeropad)
 	{
@@ -308,55 +355,96 @@ void GroundStation::onReadyRead()
 	{
 		if (m_currIdx % nBuffer == 0)
 		{
-			x_a = x_accel - zeropadding_offset[X_ACCEL_ORI];
-			y_a = y_accel - zeropadding_offset[Y_ACCEL_ORI];
-			z_a = z_accel - zeropadding_offset[Z_ACCEL_ORI] + 8192;
-			x_g = x_gyro - zeropadding_offset[X_GYRO_ORI];
-			y_g = y_gyro - zeropadding_offset[Y_GYRO_ORI];
-			z_g = z_gyro - zeropadding_offset[Z_GYRO_ORI];
-
-			if (ORIGINAL < m_plottype)
+			//简单计算倾角
 			{
-				//根据设定的量程换算单位。
-				x_a /= 8192.0f;
-				y_a /= 8192.0f;
-				z_a /= 8192.0f;
-				x_g /= 16.384f;
-				y_g /= 16.384f;
-				z_g /= 16.384f;
-				//更换纵坐标的量程。
-				if (Angle == m_plottype)
+				temp[0] = sqrt(y_a_ * y_a_ + z_a_ * z_a_);
+				temp[1] = sqrt(x_a_ * x_a_ + z_a_ * z_a_);
+
+				static float R = 0.98f;
+
+				bool bUseSimple = true;
+				if (bUseSimple)
 				{
-					
+					//X_Angle = acos(x_a_); X_Angle *= 57.29577;
+					//Y_Angle = acos(y_a_); Y_Angle *= 57.29577;
+					//Z_Angle = acos(z_a_); Z_Angle *= 57.29577;
+					angle[0] = R * (angle_last[0] + x_g_ * dt) + (1 - R) * fRad2Deg * acos(MAX(MIN(x_a_, 1.), -1.));
+					angle[1] = R * (angle_last[1] + y_g_ * dt) + (1 - R) * fRad2Deg * acos(MAX(MIN(y_a_, 1.), -1.));
+					angle[2] = angle_last[2] + z_g_ * dt;
+					angle_last[0] = angle[0];
+					angle_last[1] = angle[1];
+					angle_last[2] = angle[2];
 				}
+				else
+				{
+					//pitch and roll
+					angle[0] = R * (angle_last[0] + x_g_ * dt) + (1 - R) * fRad2Deg * atan(x_a_ / temp[0]);
+					angle_last[0] = angle[0];
+					angle[1] = R * (angle_last[1] + y_g_ * dt) + (1 - R) * fRad2Deg * atan(y_a_ / temp[1]);
+					angle_last[1] = angle[1];
+					angle[2] = angle_last[2] + z_g_ * dt;
+					angle_last[2] = angle[2];
+				}
+				m_angle->graph(0)->addData(m_currIdx, angle[0]);
+				m_angle->graph(1)->addData(m_currIdx, angle[1]);
+				m_angle->graph(2)->addData(m_currIdx, angle[2]);
 			}
 
 			if (cbXAccel->isChecked())
 			{
-				m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_a);
+				switch (m_plotAccel)
+				{
+				case ORIGINAL:	m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_accel); break;
+				case ZeroPad:	m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_a); break;
+				case UnitTransfer: m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_a_); break;
+				}
 			}
 			if (cbYAccel->isChecked())
 			{
-				m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_a);
+				switch (m_plotAccel)
+				{
+				case ORIGINAL:	m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_accel); break;
+				case ZeroPad:	m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_a); break;
+				case UnitTransfer: m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_a_); break;
+				}
 			}
 			if (cbZAccel->isChecked())
 			{
-				m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_a);
+				switch (m_plotAccel)
+				{
+				case ORIGINAL:	m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_accel); break;
+				case ZeroPad:	m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_a); break;
+				case UnitTransfer: m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_a_); break;
+				}
 			}
-			//m_pTextBrowser->append("Hello, World");
+			//m_pTextBrowser->append(QString::number(y_g));
 			if (cbXGyro->isChecked())
 			{
-				m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_g);
+				switch (m_plotGyro)
+				{
+				case ORIGINAL:		m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_gyro); break;
+				case ZeroPad:		m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_g); break;
+				case UnitTransfer:	m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_g_); break;
+				}
 			}
 			if (cbYGyro->isChecked())
 			{
-				m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_g);
+				switch (m_plotGyro)
+				{
+				case ORIGINAL:		m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_gyro); break;
+				case ZeroPad:		m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_g); break;
+				case UnitTransfer:	m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_g_); break;
+				}
 			}
 			if (cbZGyro->isChecked())
 			{
-				m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_g);
+				switch (m_plotGyro)
+				{
+				case ORIGINAL:		m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_gyro); break;
+				case ZeroPad:		m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_g); break;
+				case UnitTransfer:	m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_g_); break;
+				}
 			}
-			temp = 0;
 		}
 		break;
 	}
@@ -369,6 +457,5 @@ void GroundStation::onReadyRead()
 		m_gyroZ.append(z_gyro);
 		break;
 	}
-
 	m_currIdx++;
 }

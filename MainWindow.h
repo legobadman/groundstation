@@ -16,8 +16,8 @@ class GroundStation : public QMainWindow
 	enum PlotType
 	{
 		ORIGINAL,		//MPU6050原始数据
+		ZeroPad,		//零偏结果的显示	
 		UnitTransfer,	//经单位换算以后的数据
-		Angle,			//倾斜角
 	};
 
 public:
@@ -36,7 +36,8 @@ public slots:
 	void onGyroTimeout();
 	void prepare_zeropadding(bool);
 	void calculated_zeropad();
-	void onPlotTypeChanged(QAbstractButton* pClickedButton);
+	void onPlotAccelChanged(QAbstractButton* pClickedButton);
+	void onPlotGyroChanged(QAbstractButton* pClickedButton);
 
 protected:
 	void paintEvent(QPaintEvent* event);
@@ -62,7 +63,8 @@ private:
 	QTimer dtangle;
 	QTimer zeropad_timer;
 	ZeroPadding zeropad;
-	PlotType m_plottype;
+	PlotType m_plotAccel;
+	PlotType m_plotGyro;
 };
 
 
