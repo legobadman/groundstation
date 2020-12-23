@@ -24,13 +24,16 @@ public:
 	GroundStation(QWidget* parent);
 	~GroundStation();
 	void init();
+	void initSimple();
 	void initPort();
+	void initSimplePlot();
 	void initAccelPlot();
 	void initGyroPlot();
 	void initAnglePlot();
 
 public slots:
 	void onReadyRead();
+	void onCustomCOMRead();
 	void MyRealtimeDataSlot();
 	void onAccelTimeout();
 	void onGyroTimeout();

@@ -10,6 +10,8 @@ const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
 #define MIN std::min
 #define MAX std::max
 
+#define PROCESS_COM
+
 #define X_ACCEL_ORI 0
 #define Y_ACCEL_ORI 1
 #define Z_ACCEL_ORI 2
@@ -17,14 +19,27 @@ const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
 #define Y_GYRO_ORI 4
 #define Z_GYRO_ORI 5
 
+//#define USE_MODULE
+
+#ifndef USE_MODULE
 static qint16 zeropadding_offset[6] = {
-	14535,
-	7921,
-	21912,
-	53,
-	-264,
-	-145
+	466,
+	-32,
+	5216,
+	58,
+	-99,
+	4
 };
+#else
+static qint16 zeropadding_offset[6] = {
+	-4746,
+	80,
+	7998,
+	-19,
+	23,
+	-3
+};
+#endif
 
 
 GroundStation::GroundStation(QWidget* parent)
@@ -34,11 +49,16 @@ GroundStation::GroundStation(QWidget* parent)
 	, m_plotAccel(ORIGINAL)
 	, m_plotGyro(ORIGINAL)
 {
+#ifdef PROCESS_COM
+	initSimple();
+	initSimplePlot();
+#else
 	init();
-	initPort();
 	initAccelPlot();
 	initGyroPlot();
 	initAnglePlot();
+#endif
+	initPort();
 }
 
 GroundStation::~GroundStation()
@@ -134,6 +154,23 @@ void GroundStation::init()
 	this->resize(1304, 691);
 }
 
+void GroundStation::initSimple()
+{
+	m_accel = new QCustomPlot(this);
+	m_accel->setMinimumHeight(800);
+	QVBoxLayout* pMainLayout = new QVBoxLayout;
+
+	m_pTextBrowser = new QTextBrowser(this);
+	m_pTextBrowser->setText("");
+	pMainLayout->addWidget(m_pTextBrowser);
+	pMainLayout->addWidget(m_accel);
+
+	QWidget* pCentralWidget = new QWidget(this);
+	pCentralWidget->setLayout(pMainLayout);
+	this->setCentralWidget(pCentralWidget);
+	this->resize(1304, 691);
+}
+
 void GroundStation::onPlotAccelChanged(QAbstractButton* pClickedButton)
 {
 	if (pClickedButton->text() == u8"原始数据")
@@ -176,14 +213,19 @@ void GroundStation::initPort()
 {
 	foreach(const QSerialPortInfo & info, QSerialPortInfo::availablePorts())
 	{
-		if (info.manufacturer() == "Silicon Labs")
+		QString manufacturer = info.manufacturer();
+		if (manufacturer == "Silicon Labs" || manufacturer == "FTDI")
 		{
 			m_serialPort.setPort(info);
 			m_serialPort.setParity(QSerialPort::EvenParity);
 			m_serialPort.setBaudRate(QSerialPort::Baud115200);
 			m_serialPort.clearError();
 			m_serialPort.clear();
+			#ifdef PROCESS_COM
+			connect(&m_serialPort, SIGNAL(readyRead()), this, SLOT(onCustomCOMRead()));
+			#else
 			connect(&m_serialPort, SIGNAL(readyRead()), this, SLOT(onReadyRead()));
+			#endif
 			m_serialPort.open(QIODevice::ReadOnly);
 		}
 	}
@@ -204,6 +246,27 @@ void GroundStation::onGyroTimeout()
 void GroundStation::paintEvent(QPaintEvent* event)
 {
 	QMainWindow::paintEvent(event);
+}
+
+void GroundStation::initSimplePlot()
+{
+	//m_accel->yAxis->setRange(0, 180, Qt::AlignCenter);
+	m_accel->yAxis->setRange(-50, 180);
+	m_accel->addGraph();
+	m_accel->graph()->setPen(QPen(Qt::blue));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+
+	m_accel->addGraph();
+	m_accel->graph()->setPen(QPen(Qt::red));
+
+	m_accel->addGraph();
+	m_accel->graph()->setPen(QPen(Qt::green));
+	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+	// make left and bottom axes transfer their ranges to right and top axes:
+	connect(m_accel->xAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->xAxis2, SLOT(setRange(QCPRange)));
+	connect(m_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->yAxis2, SLOT(setRange(QCPRange)));
+	connect(&dtaccel, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	dtaccel.start(0);
 }
 
 void GroundStation::initAccelPlot()
@@ -268,14 +331,21 @@ void GroundStation::initAnglePlot()
 
 void GroundStation::MyRealtimeDataSlot()
 {
-	m_accel->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
-	m_accel->replot(QCustomPlot::rpQueuedReplot);
-
-	m_gyro->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
-	m_gyro->replot(QCustomPlot::rpQueuedReplot);
-
-	m_angle->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
-	m_angle->replot(QCustomPlot::rpQueuedReplot);
+	if (m_accel)
+	{
+		m_accel->xAxis->setRange(m_currIdx, 3000, Qt::AlignRight);
+		m_accel->replot(QCustomPlot::rpQueuedReplot);
+	}
+	if (m_gyro)
+	{
+		m_gyro->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+		m_gyro->replot(QCustomPlot::rpQueuedReplot);
+	}
+	if (m_angle)
+	{
+		m_angle->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
+		m_angle->replot(QCustomPlot::rpQueuedReplot);
+	}
 }
 
 void GroundStation::prepare_zeropadding(bool)
@@ -315,6 +385,30 @@ void GroundStation::calculated_zeropad()
 	QMessageBox msgBox(QMessageBox::Information, "", u8"校准完成。", QMessageBox::Ok);
 	msgBox.exec();
 	zeropad_timer.stop();
+}
+
+void GroundStation::onCustomCOMRead()
+{
+	static const int nBuffer = 4;
+	static float angle_last[3] = { 0 };
+	float temp[3] = { 0 };
+	QByteArray buffer = m_serialPort.read(1000);
+	QString item = buffer.constData();
+	item = item.trimmed();
+	m_pTextBrowser->append(item);
+
+	QByteArrayList list = buffer.split('\n');
+	for (int i = 0; i < list.length(); i++)
+	{
+		QByteArrayList pairs = list[i].split(',');
+		if (pairs.length() != 2)
+			return;
+		float roll = pairs[0].toFloat();
+		float pitch = pairs[1].toFloat();
+		m_accel->graph(0)->addData(m_currIdx, roll);
+		m_accel->graph(1)->addData(m_currIdx, pitch);
+		m_currIdx++;
+	}
 }
 
 void GroundStation::onReadyRead()
