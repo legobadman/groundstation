@@ -3,6 +3,9 @@
 
 #include <QMainWindow>
 #include "qcustomplot.h"
+#include <Eigen/Eigen>
+
+using namespace Eigen;
 
 class GroundStation : public QMainWindow
 {
@@ -15,8 +18,10 @@ class GroundStation : public QMainWindow
 	};
 	enum PlotType
 	{
+		UNKNOWN,
 		ORIGINAL,		//MPU6050原始数据
-		ZeroPad,		//零偏结果的显示	
+		ZeroPad,		//零偏结果的显示
+		Angle,			//观察角度
 		UnitTransfer,	//经单位换算以后的数据
 	};
 
@@ -27,9 +32,11 @@ public:
 	void initSimple();
 	void initPort();
 	void initSimplePlot();
+	void initGlossPlot();
 	void initAccelPlot();
 	void initGyroPlot();
 	void initAnglePlot();
+	void initParameters();
 
 public slots:
 	void onReadyRead();
@@ -52,6 +59,7 @@ private:
 	QCustomPlot* m_gyro;
 	QCustomPlot* m_accel;
 	QCustomPlot* m_angle;
+	QCustomPlot* m_gloss;
 	QSerialPort m_serialPort;
 	QString m_msgStream;
 	QVector<int> m_accelX;
@@ -64,11 +72,19 @@ private:
 	QTimer dtaccel;
 	QTimer dtgyro;
 	QTimer dtangle;
+	QTimer dtgloss;
 	QTimer zeropad_timer;
 	ZeroPadding zeropad;
 	PlotType m_plotAccel;
 	PlotType m_plotGyro;
-};
+	PlotType mainType;
 
+	//加速度标定参数
+	Matrix3f T;		//倾斜角矩阵
+	Matrix3f K;		//scale
+	Vector3f b;		//bias;
+
+	static float g;
+};
 
 #endif // __GROUND_STATION_H__

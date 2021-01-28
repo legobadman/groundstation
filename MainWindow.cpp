@@ -20,6 +20,7 @@ const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
 #define Z_GYRO_ORI 5
 
 //#define USE_MODULE
+float GroundStation::g = 9.7883;
 
 #ifndef USE_MODULE
 static qint16 zeropadding_offset[6] = {
@@ -41,6 +42,14 @@ static qint16 zeropadding_offset[6] = {
 };
 #endif
 
+Vector3f calibrate(const Vector3f& a, const Matrix3f& T, const Matrix3f& K, const Vector3f& b)
+{
+	Vector3f result;
+	result = T * K * (a + b);
+	return result;
+}
+
+
 
 GroundStation::GroundStation(QWidget* parent)
 	: QMainWindow(parent)
@@ -48,10 +57,12 @@ GroundStation::GroundStation(QWidget* parent)
 	, zeropad(NO_ZEROPAD)
 	, m_plotAccel(ORIGINAL)
 	, m_plotGyro(ORIGINAL)
+	, mainType(UNKNOWN)
 {
 #ifdef PROCESS_COM
 	initSimple();
 	initSimplePlot();
+	initGlossPlot();
 #else
 	init();
 	initAccelPlot();
@@ -59,6 +70,7 @@ GroundStation::GroundStation(QWidget* parent)
 	initAnglePlot();
 #endif
 	initPort();
+	initParameters();
 }
 
 GroundStation::~GroundStation()
@@ -157,13 +169,16 @@ void GroundStation::init()
 void GroundStation::initSimple()
 {
 	m_accel = new QCustomPlot(this);
-	m_accel->setMinimumHeight(800);
+	m_accel->setMinimumHeight(600);
+	m_gloss = new QCustomPlot(this);
+	m_gloss->setMinimumHeight(600);
 	QVBoxLayout* pMainLayout = new QVBoxLayout;
 
 	m_pTextBrowser = new QTextBrowser(this);
 	m_pTextBrowser->setText("");
 	pMainLayout->addWidget(m_pTextBrowser);
 	pMainLayout->addWidget(m_accel);
+	pMainLayout->addWidget(m_gloss);
 
 	QWidget* pCentralWidget = new QWidget(this);
 	pCentralWidget->setLayout(pMainLayout);
@@ -269,6 +284,18 @@ void GroundStation::initSimplePlot()
 	dtaccel.start(0);
 }
 
+void GroundStation::initGlossPlot()
+{
+	m_gloss->yAxis->setRange(0, 1);
+	m_gloss->addGraph();
+	m_gloss->graph()->setPen(QPen(Qt::black));
+
+	connect(m_gloss->xAxis, SIGNAL(rangeChanged(QCPRange)), m_gloss->xAxis, SLOT(setRange(QCPRange)));
+	connect(m_gloss->yAxis, SIGNAL(rangeChanged(QCPRange)), m_gloss->yAxis, SLOT(setRange(QCPRange)));
+	connect(&dtgloss, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	dtgloss.start(0);
+}
+
 void GroundStation::initAccelPlot()
 {
 	m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
@@ -329,11 +356,22 @@ void GroundStation::initAnglePlot()
 	dtangle.start(0);
 }
 
+void GroundStation::initParameters()
+{
+	T << 1, 0, 0,
+		0, 1, 0,
+		0, 0, 1;
+	K << 1, 0, 0,
+		0, 1, 0,
+		0, 0, 1;
+	b << 0, 0, 0;
+}
+
 void GroundStation::MyRealtimeDataSlot()
 {
 	if (m_accel)
 	{
-		m_accel->xAxis->setRange(m_currIdx, 3000, Qt::AlignRight);
+		m_accel->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
 		m_accel->replot(QCustomPlot::rpQueuedReplot);
 	}
 	if (m_gyro)
@@ -345,6 +383,11 @@ void GroundStation::MyRealtimeDataSlot()
 	{
 		m_angle->xAxis->setRange(m_currIdx, 500, Qt::AlignRight);
 		m_angle->replot(QCustomPlot::rpQueuedReplot);
+	}
+	if (m_gloss)
+	{
+		m_gloss->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
+		m_gloss->replot(QCustomPlot::rpQueuedReplot);
 	}
 }
 
@@ -391,6 +434,7 @@ void GroundStation::onCustomCOMRead()
 {
 	static const int nBuffer = 4;
 	static float angle_last[3] = { 0 };
+	static bool bInit = false;
 	float temp[3] = { 0 };
 	QByteArray buffer = m_serialPort.read(1000);
 	QString item = buffer.constData();
@@ -401,13 +445,69 @@ void GroundStation::onCustomCOMRead()
 	for (int i = 0; i < list.length(); i++)
 	{
 		QByteArrayList pairs = list[i].split(',');
-		if (pairs.length() != 2)
-			return;
-		float roll = pairs[0].toFloat();
-		float pitch = pairs[1].toFloat();
-		m_accel->graph(0)->addData(m_currIdx, roll);
-		m_accel->graph(1)->addData(m_currIdx, pitch);
-		m_currIdx++;
+		int n = pairs.length();
+		if (!bInit)
+		{
+			if (n == 3 || n == 2)
+			{
+				m_accel->yAxis->setRange(-50, 180);
+				mainType = Angle;
+				bInit = true;
+			}
+			else if (n == 6)
+			{
+				// 要观察数据是否为MPU6050传感器的原始输出，还是除以量程得到的数据。
+				float ax = pairs[0].toFloat(), ay = pairs[1].toFloat(), az = pairs[2].toFloat();
+				if (abs(ax + ay + az) < 100)
+				{
+					//一般传感器的数值较大
+					m_accel->yAxis->setRange(0, 4, Qt::AlignCenter);
+					//m_gloss->yAxis->setRange(0, 2);
+					mainType = UnitTransfer;
+				}
+				else
+				{
+					m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
+					mainType = ORIGINAL;
+				}
+				bInit = true;
+			}
+			else
+			{
+				continue;
+			}
+		}
+
+		if (mainType == Angle && (n == 3 || n ==2))
+		{
+			float roll = pairs[0].toFloat();
+			float pitch = pairs[1].toFloat();
+			m_accel->graph(0)->addData(m_currIdx, roll);
+			m_accel->graph(1)->addData(m_currIdx, pitch);
+			m_currIdx++;
+		}
+		else if (n == 6)
+		{
+			float x_accel = pairs[0].toFloat();
+			float y_accel = pairs[1].toFloat();
+			float z_accel = pairs[2].toFloat();
+			float x_gyro = pairs[3].toFloat();
+			float y_gyro = pairs[4].toFloat();
+			float z_gyro = pairs[5].toFloat();
+			m_accel->graph(0)->addData(m_currIdx, x_accel);
+			m_accel->graph(1)->addData(m_currIdx, y_accel);
+			m_accel->graph(2)->addData(m_currIdx, z_accel);
+
+			if (mainType == UnitTransfer)
+			{
+				Vector3f a = { x_accel, y_accel, z_accel };
+				Vector3f result = calibrate(a, T, K, b);
+				float norm = result.norm() * g;
+				float gloss = (norm - g) * (norm - g);
+				m_gloss->graph(0)->addData(m_currIdx, gloss);
+			}
+			m_currIdx++;
+		}
 	}
 }
 
