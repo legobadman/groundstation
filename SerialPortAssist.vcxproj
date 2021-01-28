@@ -90,7 +90,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Qt\Qt-5.15.0\include\QtWidgets;C:\Qt\Qt-5.15.0\include\QtCore;C:\Qt\Qt-5.15.0\include;$(ProjectDir)GeneratedFiles\$(Configuration);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Qt\Qt-5.15.0\include\QtWidgets;C:\Qt\Qt-5.15.0\include\QtCore;C:\Qt\Qt-5.15.0\include;$(ProjectDir)GeneratedFiles\$(Configuration);$(ProjectDir)eigen;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

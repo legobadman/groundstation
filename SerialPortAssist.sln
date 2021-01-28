@@ -5,6 +5,13 @@ VisualStudioVersion = 16.0.29911.84
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SerialPortAssist", "SerialPortAssist.vcxproj", "{5E1EFE12-ACF6-432F-BAD8-F4CEC38A1557}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "NewFolder1", "NewFolder1", "{2C266580-2172-4FFA-AB06-6627F507C768}"
+	ProjectSection(SolutionItems) = preProject
+		natvis\eigen.natvis = natvis\eigen.natvis
+		natvis\qt.natstepfilter = natvis\qt.natstepfilter
+		natvis\Qt.natvis = natvis\Qt.natvis
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
