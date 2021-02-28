@@ -91,6 +91,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>C:\Qt\Qt-5.15.0\include\QtWidgets;C:\Qt\Qt-5.15.0\include\QtCore;C:\Qt\Qt-5.15.0\include;$(ProjectDir)GeneratedFiles\$(Configuration);$(ProjectDir)eigen;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp14</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -172,9 +173,11 @@ mkdir $(SolutionDir)\GeneratedFiles\$(Configuration)
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">"C:\Qt\Qt-5.15.0\bin\moc.exe" "%(FullPath)" -o "$(SolutionDir)\GeneratedFiles\$(Configuration)\moc_%(Filename).cpp"</Command>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">.\GeneratedFiles\$(Configuration)\moc_%(Filename).cpp;%(Outputs)</Outputs>
     </CustomBuild>
+    <ClInclude Include="LevenbergMarquardt.h" />
     <ClInclude Include="SerialPortAssist.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="LevenbergMarquardt.cpp" />
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="qcustomplot.cpp" />
     <ClCompile Include="SerialPortAssist.cpp" />

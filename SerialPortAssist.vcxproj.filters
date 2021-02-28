@@ -21,6 +21,9 @@
     <ClInclude Include="SerialPortAssist.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="LevenbergMarquardt.h">
+      <Filter>源文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="SerialPortAssist.cpp">
@@ -30,6 +33,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="qcustomplot.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="LevenbergMarquardt.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
