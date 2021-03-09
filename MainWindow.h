@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include "qcustomplot.h"
+#include "NewtonCalibration.h"
 #include <Eigen/Eigen>
 
 using namespace Eigen;
@@ -38,7 +39,12 @@ public:
 	void initAnglePlot();
 	void initParameters();
 
+signals:
+	void operate(const QString&);
+	void calibrationReady(const MatrixXf& X);
+
 public slots:
+	void accel_calibration();
 	void onReadyRead();
 	void onCustomCOMRead();
 	void MyRealtimeDataSlot();
@@ -48,6 +54,8 @@ public slots:
 	void calculated_zeropad();
 	void onPlotAccelChanged(QAbstractButton* pClickedButton);
 	void onPlotGyroChanged(QAbstractButton* pClickedButton);
+	void onCalibrationReady(const MatrixXf& X);
+	void setButtonIcon(int);
 
 protected:
 	void paintEvent(QPaintEvent* event);
@@ -60,6 +68,8 @@ private:
 	QCustomPlot* m_accel;
 	QCustomPlot* m_angle;
 	QCustomPlot* m_gloss;
+	QPushButton* m_pBtn;
+	QMovie* myMovie;
 	QSerialPort m_serialPort;
 	QString m_msgStream;
 	QVector<int> m_accelX;
@@ -80,9 +90,14 @@ private:
 	PlotType mainType;
 
 	//加速度标定参数
-	Matrix3f T;		//倾斜角矩阵
-	Matrix3f K;		//scale
+	Matrix3f TK;		//倾斜角矩阵
 	Vector3f b;		//bias;
+
+	NewtonCalibration* pCalibration;
+	MatrixXf X;
+	int m_idxX;
+	bool m_bCalibrating;
+	bool m_bCollect4Calibrate;
 
 	static float g;
 };

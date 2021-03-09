@@ -174,13 +174,23 @@ mkdir $(SolutionDir)\GeneratedFiles\$(Configuration)
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">.\GeneratedFiles\$(Configuration)\moc_%(Filename).cpp;%(Outputs)</Outputs>
     </CustomBuild>
     <ClInclude Include="LevenbergMarquardt.h" />
+    <ClInclude Include="NewtonCalibration.h" />
     <ClInclude Include="SerialPortAssist.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="LevenbergMarquardt.cpp" />
     <ClCompile Include="MainWindow.cpp" />
+    <ClCompile Include="NewtonCalibration.cpp" />
+    <ClCompile Include="qcc__drone.cpp" />
     <ClCompile Include="qcustomplot.cpp" />
     <ClCompile Include="SerialPortAssist.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="res\drone.qrc">
+      <FileType>Document</FileType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">"C:\Qt\Qt-5.15.0\bin\rcc.exe" "%(FullPath)" -o "$(SolutionDir)\qcc__%(Filename).cpp"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(SolutionDir)\qcc__%(Filename).cpp</Outputs>
+    </CustomBuild>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

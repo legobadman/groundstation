@@ -2,7 +2,7 @@
 #include "MainWindow.h"
 #include "moc_MainWindow.cpp"
 
-const float dt = 0.005; //时间周期
+const float dt = 0.005f; //时间周期
 float angle[3] = { 0 };
 
 const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
@@ -19,8 +19,10 @@ const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
 #define Y_GYRO_ORI 4
 #define Z_GYRO_ORI 5
 
+#define CALIBRATION_SAMPLES 1000
+
 //#define USE_MODULE
-float GroundStation::g = 9.7883;
+float GroundStation::g = 9.7883f;
 
 #ifndef USE_MODULE
 static qint16 zeropadding_offset[6] = {
@@ -42,13 +44,6 @@ static qint16 zeropadding_offset[6] = {
 };
 #endif
 
-Vector3f calibrate(const Vector3f& a, const Matrix3f& T, const Matrix3f& K, const Vector3f& b)
-{
-	Vector3f result;
-	result = T * K * (a + b);
-	return result;
-}
-
 
 
 GroundStation::GroundStation(QWidget* parent)
@@ -58,6 +53,10 @@ GroundStation::GroundStation(QWidget* parent)
 	, m_plotAccel(ORIGINAL)
 	, m_plotGyro(ORIGINAL)
 	, mainType(UNKNOWN)
+	, pCalibration(NULL)
+	, m_bCalibrating(false)
+	, m_bCollect4Calibrate(false)
+	, m_idxX(0)
 {
 #ifdef PROCESS_COM
 	initSimple();
@@ -176,9 +175,25 @@ void GroundStation::initSimple()
 
 	m_pTextBrowser = new QTextBrowser(this);
 	m_pTextBrowser->setText("");
+
+	m_pBtn = new QPushButton(this);
+	m_pBtn->setText(u8"加速度计较准");
+
+	myMovie = new QMovie("circle.gif", QByteArray(), m_pBtn);
+	myMovie->setScaledSize(QSize(20, 20));
+	connect(myMovie, SIGNAL(frameChanged(int)), this, SLOT(setButtonIcon(int)));
+	// if movie doesn't loop forever, force it to.
+	if (myMovie->loopCount() != -1)
+		connect(myMovie, SIGNAL(finished()), myMovie, SLOT(start()));
+	if (myMovie->isValid())
+		myMovie->start();
+
+	
+	connect(m_pBtn, SIGNAL(clicked()), this, SLOT(accel_calibration()));
+	pMainLayout->addWidget(m_pBtn);
+
 	pMainLayout->addWidget(m_pTextBrowser);
 	pMainLayout->addWidget(m_accel);
-	pMainLayout->addWidget(m_gloss);
 
 	QWidget* pCentralWidget = new QWidget(this);
 	pCentralWidget->setLayout(pMainLayout);
@@ -238,6 +253,8 @@ void GroundStation::initPort()
 			m_serialPort.clear();
 			#ifdef PROCESS_COM
 			connect(&m_serialPort, SIGNAL(readyRead()), this, SLOT(onCustomCOMRead()));
+			connect(this, SIGNAL(calibrationReady(const MatrixXf&)), this,
+				SLOT(onCalibrationReady(const MatrixXf&)));
 			#else
 			connect(&m_serialPort, SIGNAL(readyRead()), this, SLOT(onReadyRead()));
 			#endif
@@ -358,10 +375,7 @@ void GroundStation::initAnglePlot()
 
 void GroundStation::initParameters()
 {
-	T << 1, 0, 0,
-		0, 1, 0,
-		0, 0, 1;
-	K << 1, 0, 0,
+	TK << 1, 0, 0,
 		0, 1, 0,
 		0, 0, 1;
 	b << 0, 0, 0;
@@ -389,6 +403,11 @@ void GroundStation::MyRealtimeDataSlot()
 		m_gloss->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
 		m_gloss->replot(QCustomPlot::rpQueuedReplot);
 	}
+}
+
+void GroundStation::setButtonIcon(int)
+{
+	m_pBtn->setIcon(QIcon(myMovie->currentPixmap()));
 }
 
 void GroundStation::prepare_zeropadding(bool)
@@ -432,10 +451,7 @@ void GroundStation::calculated_zeropad()
 
 void GroundStation::onCustomCOMRead()
 {
-	static const int nBuffer = 4;
-	static float angle_last[3] = { 0 };
 	static bool bInit = false;
-	float temp[3] = { 0 };
 	QByteArray buffer = m_serialPort.read(1000);
 	QString item = buffer.constData();
 	item = item.trimmed();
@@ -494,21 +510,58 @@ void GroundStation::onCustomCOMRead()
 			float x_gyro = pairs[3].toFloat();
 			float y_gyro = pairs[4].toFloat();
 			float z_gyro = pairs[5].toFloat();
-			m_accel->graph(0)->addData(m_currIdx, x_accel);
-			m_accel->graph(1)->addData(m_currIdx, y_accel);
-			m_accel->graph(2)->addData(m_currIdx, z_accel);
 
-			if (mainType == UnitTransfer)
+			Vector3f a_(x_accel, y_accel, z_accel);
+			Vector3f a_calibrated = TK * (a_ + b);
+
+			m_accel->graph(0)->addData(m_currIdx, a_calibrated(0));
+			m_accel->graph(1)->addData(m_currIdx, a_calibrated(1));
+			m_accel->graph(2)->addData(m_currIdx, a_calibrated(2));
+
+			if (m_bCollect4Calibrate)
 			{
-				Vector3f a = { x_accel, y_accel, z_accel };
-				Vector3f result = calibrate(a, T, K, b);
-				float norm = result.norm() * g;
-				float gloss = (norm - g) * (norm - g);
-				m_gloss->graph(0)->addData(m_currIdx, gloss);
+				if (m_idxX < X.rows())
+				{
+					X(m_idxX, 0) = x_accel;
+					X(m_idxX, 1) = y_accel;
+					X(m_idxX, 2) = z_accel;
+					m_idxX++;
+				}
+				else
+				{
+					m_bCollect4Calibrate = false;
+					emit calibrationReady(X);
+				}
 			}
+
+			//if (mainType == UnitTransfer)
+			//{
+			//	Vector3f a = { x_accel, y_accel, z_accel };
+			//	Vector3f result = calibrate(a, T, K, b);
+			//	float norm = result.norm() * g;
+			//	float gloss = (norm - g) * (norm - g);
+			//	m_gloss->graph(0)->addData(m_currIdx, gloss);
+			//}
 			m_currIdx++;
 		}
 	}
+}
+
+void GroundStation::accel_calibration()
+{
+	X = MatrixXf(CALIBRATION_SAMPLES, 3);
+	m_bCalibrating = true;
+	m_bCollect4Calibrate = true;
+}
+
+void GroundStation::onCalibrationReady(const MatrixXf& X)
+{
+	pCalibration = new NewtonCalibration(X);
+	VEC_THETA_TYPE theta;
+	
+	pCalibration->solve();
+	QMessageBox(QMessageBox::NoIcon, "", u8"较准完成").exec();
+	pCalibration->get_optimized_result(TK, b);
 }
 
 void GroundStation::onReadyRead()

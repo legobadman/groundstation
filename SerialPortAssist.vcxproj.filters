@@ -24,6 +24,9 @@
     <ClInclude Include="LevenbergMarquardt.h">
       <Filter>源文件</Filter>
     </ClInclude>
+    <ClInclude Include="NewtonCalibration.h">
+      <Filter>源文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="SerialPortAssist.cpp">
@@ -38,6 +41,12 @@
     <ClCompile Include="LevenbergMarquardt.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="NewtonCalibration.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="qcc__drone.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="MainWindow.h">
@@ -46,5 +55,6 @@
     <CustomBuild Include="qcustomplot.h">
       <Filter>源文件</Filter>
     </CustomBuild>
+    <CustomBuild Include="res\drone.qrc" />
   </ItemGroup>
 </Project>
