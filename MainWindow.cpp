@@ -19,7 +19,7 @@ const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
 #define Y_GYRO_ORI 4
 #define Z_GYRO_ORI 5
 
-#define CALIBRATION_SAMPLES 1000
+#define CALIBRATION_SAMPLES 300	//每一面较准所采样的数量。
 
 //#define USE_MODULE
 float GroundStation::g = 9.7883f;
@@ -54,14 +54,23 @@ GroundStation::GroundStation(QWidget* parent)
 	, m_plotGyro(ORIGINAL)
 	, mainType(UNKNOWN)
 	, pCalibration(NULL)
-	, m_bCalibrating(false)
+	, m_pSixSideBtn(NULL)
 	, m_bCollect4Calibrate(false)
 	, m_idxX(0)
+	, m_side(SIDE_UP)
+	, m_type(ONE_SIDE)
+	, m_pTip(NULL)
+	, m_bAverage4sixside(false)
 {
 #ifdef PROCESS_COM
 	initSimple();
 	initSimplePlot();
-	initGlossPlot();
+	X = MatrixXf(CALIBRATION_SAMPLES, 3);
+	m_bAverage4sixside = false;
+	if (m_bAverage4sixside)
+		X_sixSide = MatrixXf(6, 3);
+	else
+		X_sixSide = MatrixXf(6 * CALIBRATION_SAMPLES, 3);
 #else
 	init();
 	initAccelPlot();
@@ -169,17 +178,19 @@ void GroundStation::initSimple()
 {
 	m_accel = new QCustomPlot(this);
 	m_accel->setMinimumHeight(600);
-	m_gloss = new QCustomPlot(this);
-	m_gloss->setMinimumHeight(600);
 	QVBoxLayout* pMainLayout = new QVBoxLayout;
 
-	m_pTextBrowser = new QTextBrowser(this);
-	m_pTextBrowser->setText("");
+	QHBoxLayout* pHBoxLayout = new QHBoxLayout;
 
-	m_pBtn = new QPushButton(this);
-	m_pBtn->setText(u8"加速度计较准");
+	m_pOneSideBtn = new QPushButton(this);
+	m_pOneSideBtn->setText(u8"加速度计较准");
+	pHBoxLayout->addWidget(m_pOneSideBtn);
 
-	myMovie = new QMovie("circle.gif", QByteArray(), m_pBtn);
+	m_pSixSideBtn = new QPushButton(this);
+	m_pSixSideBtn->setText(u8"六面较准");
+	pHBoxLayout->addWidget(m_pSixSideBtn);
+
+	myMovie = new QMovie("circle.gif", QByteArray(), m_pOneSideBtn);
 	myMovie->setScaledSize(QSize(20, 20));
 	connect(myMovie, SIGNAL(frameChanged(int)), this, SLOT(setButtonIcon(int)));
 	// if movie doesn't loop forever, force it to.
@@ -188,9 +199,24 @@ void GroundStation::initSimple()
 	if (myMovie->isValid())
 		myMovie->start();
 
-	
-	connect(m_pBtn, SIGNAL(clicked()), this, SLOT(accel_calibration()));
-	pMainLayout->addWidget(m_pBtn);
+	connect(m_pOneSideBtn, SIGNAL(clicked()), this, SLOT(accel_calibration()));
+	connect(m_pSixSideBtn, SIGNAL(clicked()), this, SLOT(six_sided_calibration()));
+
+	pHBoxLayout->addSpacerItem(new QSpacerItem(100, 20, QSizePolicy::Preferred, QSizePolicy::Expanding));
+
+	m_pTip = new QLabel(this);
+	pHBoxLayout->addWidget(m_pTip);
+	m_pTip->setText(u8"陀螺仪向上：");
+
+	QPushButton* pStartBtn = new QPushButton(this);
+	pStartBtn->setText(u8"开始收集");
+	connect(pStartBtn, SIGNAL(clicked()), this, SLOT(on_start_collect4calibration()));
+	pHBoxLayout->addWidget(pStartBtn);
+
+	pMainLayout->addItem(pHBoxLayout);
+
+	m_pTextBrowser = new QTextBrowser(this);
+	m_pTextBrowser->setText("");
 
 	pMainLayout->addWidget(m_pTextBrowser);
 	pMainLayout->addWidget(m_accel);
@@ -256,7 +282,6 @@ void GroundStation::initPort()
 			connect(this, SIGNAL(calibrationReady(const MatrixXf&)), this,
 				SLOT(onCalibrationReady(const MatrixXf&)));
 			#else
-			connect(&m_serialPort, SIGNAL(readyRead()), this, SLOT(onReadyRead()));
 			#endif
 			m_serialPort.open(QIODevice::ReadOnly);
 		}
@@ -299,18 +324,6 @@ void GroundStation::initSimplePlot()
 	connect(m_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->yAxis2, SLOT(setRange(QCPRange)));
 	connect(&dtaccel, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
 	dtaccel.start(0);
-}
-
-void GroundStation::initGlossPlot()
-{
-	m_gloss->yAxis->setRange(0, 1);
-	m_gloss->addGraph();
-	m_gloss->graph()->setPen(QPen(Qt::black));
-
-	connect(m_gloss->xAxis, SIGNAL(rangeChanged(QCPRange)), m_gloss->xAxis, SLOT(setRange(QCPRange)));
-	connect(m_gloss->yAxis, SIGNAL(rangeChanged(QCPRange)), m_gloss->yAxis, SLOT(setRange(QCPRange)));
-	connect(&dtgloss, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
-	dtgloss.start(0);
 }
 
 void GroundStation::initAccelPlot()
@@ -407,7 +420,7 @@ void GroundStation::MyRealtimeDataSlot()
 
 void GroundStation::setButtonIcon(int)
 {
-	m_pBtn->setIcon(QIcon(myMovie->currentPixmap()));
+	m_pOneSideBtn->setIcon(QIcon(myMovie->currentPixmap()));
 }
 
 void GroundStation::prepare_zeropadding(bool)
@@ -455,7 +468,6 @@ void GroundStation::onCustomCOMRead()
 	QByteArray buffer = m_serialPort.read(1000);
 	QString item = buffer.constData();
 	item = item.trimmed();
-	m_pTextBrowser->append(item);
 
 	QByteArrayList list = buffer.split('\n');
 	for (int i = 0; i < list.length(); i++)
@@ -464,28 +476,12 @@ void GroundStation::onCustomCOMRead()
 		int n = pairs.length();
 		if (!bInit)
 		{
-			if (n == 3 || n == 2)
-			{
-				m_accel->yAxis->setRange(-50, 180);
-				mainType = Angle;
-				bInit = true;
-			}
-			else if (n == 6)
+			if (n == 6)
 			{
 				// 要观察数据是否为MPU6050传感器的原始输出，还是除以量程得到的数据。
 				float ax = pairs[0].toFloat(), ay = pairs[1].toFloat(), az = pairs[2].toFloat();
-				if (abs(ax + ay + az) < 100)
-				{
-					//一般传感器的数值较大
-					m_accel->yAxis->setRange(0, 4, Qt::AlignCenter);
-					//m_gloss->yAxis->setRange(0, 2);
-					mainType = UnitTransfer;
-				}
-				else
-				{
-					m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
-					mainType = ORIGINAL;
-				}
+				m_accel->yAxis->setRange(0, 4, Qt::AlignCenter);
+				mainType = UnitTransfer;
 				bInit = true;
 			}
 			else
@@ -514,13 +510,15 @@ void GroundStation::onCustomCOMRead()
 			Vector3f a_(x_accel, y_accel, z_accel);
 			Vector3f a_calibrated = TK * (a_ + b);
 
+			m_pTextBrowser->append(QString("%1, %2, %3\n").arg(a_calibrated(0)).arg(a_calibrated(1)).arg(a_calibrated(2)));
+
 			m_accel->graph(0)->addData(m_currIdx, a_calibrated(0));
 			m_accel->graph(1)->addData(m_currIdx, a_calibrated(1));
 			m_accel->graph(2)->addData(m_currIdx, a_calibrated(2));
 
 			if (m_bCollect4Calibrate)
 			{
-				if (m_idxX < X.rows())
+				if (m_idxX < CALIBRATION_SAMPLES)
 				{
 					X(m_idxX, 0) = x_accel;
 					X(m_idxX, 1) = y_accel;
@@ -530,18 +528,10 @@ void GroundStation::onCustomCOMRead()
 				else
 				{
 					m_bCollect4Calibrate = false;
+					m_idxX = 0;
 					emit calibrationReady(X);
 				}
 			}
-
-			//if (mainType == UnitTransfer)
-			//{
-			//	Vector3f a = { x_accel, y_accel, z_accel };
-			//	Vector3f result = calibrate(a, T, K, b);
-			//	float norm = result.norm() * g;
-			//	float gloss = (norm - g) * (norm - g);
-			//	m_gloss->graph(0)->addData(m_currIdx, gloss);
-			//}
 			m_currIdx++;
 		}
 	}
@@ -549,160 +539,75 @@ void GroundStation::onCustomCOMRead()
 
 void GroundStation::accel_calibration()
 {
-	X = MatrixXf(CALIBRATION_SAMPLES, 3);
-	m_bCalibrating = true;
+	m_type = ONE_SIDE;
+	m_side = SIDE_UP;
+	m_pTip->setText(u8"陀螺仪向上：");
+}
+
+void GroundStation::six_sided_calibration()
+{
+	m_type = SIX_SIDE;
+	m_side = SIDE_UP;
+	m_pTip->setText(u8"陀螺仪向上：");
+}
+
+void GroundStation::on_start_collect4calibration()
+{
 	m_bCollect4Calibrate = true;
 }
 
 void GroundStation::onCalibrationReady(const MatrixXf& X)
 {
-	pCalibration = new NewtonCalibration(X);
-	VEC_THETA_TYPE theta;
-	
-	pCalibration->solve();
-	QMessageBox(QMessageBox::NoIcon, "", u8"较准完成").exec();
-	pCalibration->get_optimized_result(TK, b);
-}
-
-void GroundStation::onReadyRead()
-{
-	static const int nBuffer = 4;
-	static float angle_last[3] = { 0 };
-	float temp[3] = { 0 };
-	QByteArray line = m_serialPort.readLine();
-	QString item = line.constData();
-	const auto&& parts = item.split(',');
-	if (parts.length() != 6)
-		return;
-	
-	qint16 x_accel = parts[0].toInt();
-	qint16 y_accel = parts[1].toInt();
-	qint16 z_accel = parts[2].toInt();
-	qint16 x_gyro = parts[3].toInt();
-	qint16 y_gyro = parts[4].toInt();
-	qint16 z_gyro = parts[5].toInt();
-	double x_a = x_accel - zeropadding_offset[X_ACCEL_ORI];
-	double y_a = y_accel - zeropadding_offset[Y_ACCEL_ORI];
-	double z_a = z_accel - zeropadding_offset[Z_ACCEL_ORI] + 8192.0f;
-	double x_g = x_gyro - zeropadding_offset[X_GYRO_ORI];
-	double y_g = y_gyro - zeropadding_offset[Y_GYRO_ORI];
-	double z_g = z_gyro - zeropadding_offset[Z_GYRO_ORI];
-	double X_Angle = 0, Y_Angle = 0, Z_Angle = 0;
-	double x_a_ = x_a / 8192.0f;
-	double y_a_ = y_a / 8192.0f;
-	double z_a_ = z_a / 8192.0f;
-	double x_g_ = x_g / 16.384f;
-	double y_g_ = y_g / 16.384f;
-	double z_g_ = z_g / 16.384f;
-
-	switch (zeropad)
+	if (m_type == ONE_SIDE) {
+		pCalibration = new NewtonCalibration(X);
+		pCalibration->solve();
+		QMessageBox(QMessageBox::NoIcon, "", u8"较准完成").exec();
+		pCalibration->get_optimized_result(TK, b);
+	}
+	else if (m_type == SIX_SIDE)
 	{
-	case NO_ZEROPAD:
-	case ZEROPADDED:
-	{
-		if (m_currIdx % nBuffer == 0)
-		{
-			//简单计算倾角
+		int k = m_side;
+		if (m_bAverage4sixside) {
+			float x_accel_sum = 0, y_accel_sum = 0, z_accel_sum = 0;
+			for (int i = 0; i < CALIBRATION_SAMPLES; i++)
 			{
-				temp[0] = sqrt(y_a_ * y_a_ + z_a_ * z_a_);
-				temp[1] = sqrt(x_a_ * x_a_ + z_a_ * z_a_);
-
-				static float R = 0.98f;
-
-				bool bUseSimple = true;
-				if (bUseSimple)
-				{
-					//X_Angle = acos(x_a_); X_Angle *= 57.29577;
-					//Y_Angle = acos(y_a_); Y_Angle *= 57.29577;
-					//Z_Angle = acos(z_a_); Z_Angle *= 57.29577;
-					angle[0] = R * (angle_last[0] + x_g_ * dt) + (1 - R) * fRad2Deg * acos(MAX(MIN(x_a_, 1.), -1.));
-					angle[1] = R * (angle_last[1] + y_g_ * dt) + (1 - R) * fRad2Deg * acos(MAX(MIN(y_a_, 1.), -1.));
-					angle[2] = angle_last[2] + z_g_ * dt;
-					angle_last[0] = angle[0];
-					angle_last[1] = angle[1];
-					angle_last[2] = angle[2];
-				}
-				else
-				{
-					//pitch and roll
-					angle[0] = R * (angle_last[0] + x_g_ * dt) + (1 - R) * fRad2Deg * atan(x_a_ / temp[0]);
-					angle_last[0] = angle[0];
-					angle[1] = R * (angle_last[1] + y_g_ * dt) + (1 - R) * fRad2Deg * atan(y_a_ / temp[1]);
-					angle_last[1] = angle[1];
-					angle[2] = angle_last[2] + z_g_ * dt;
-					angle_last[2] = angle[2];
-				}
-				m_angle->graph(0)->addData(m_currIdx, angle[0]);
-				m_angle->graph(1)->addData(m_currIdx, angle[1]);
-				m_angle->graph(2)->addData(m_currIdx, angle[2]);
+				x_accel_sum += X(i, 0);
+				y_accel_sum += X(i, 1);
+				z_accel_sum += X(i, 2);
 			}
-
-			if (cbXAccel->isChecked())
+			x_accel_sum /= CALIBRATION_SAMPLES;
+			y_accel_sum /= CALIBRATION_SAMPLES;
+			z_accel_sum /= CALIBRATION_SAMPLES;
+			X_sixSide(k, 0) = x_accel_sum;
+			X_sixSide(k, 1) = y_accel_sum;
+			X_sixSide(k, 2) = z_accel_sum;
+		}
+		else {
+			for (int i = 0; i < CALIBRATION_SAMPLES; i++)
 			{
-				switch (m_plotAccel)
-				{
-				case ORIGINAL:	m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_accel); break;
-				case ZeroPad:	m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_a); break;
-				case UnitTransfer: m_accel->graph(X_ACCEL_ORI)->addData(m_currIdx, x_a_); break;
-				}
-			}
-			if (cbYAccel->isChecked())
-			{
-				switch (m_plotAccel)
-				{
-				case ORIGINAL:	m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_accel); break;
-				case ZeroPad:	m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_a); break;
-				case UnitTransfer: m_accel->graph(Y_ACCEL_ORI)->addData(m_currIdx, y_a_); break;
-				}
-			}
-			if (cbZAccel->isChecked())
-			{
-				switch (m_plotAccel)
-				{
-				case ORIGINAL:	m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_accel); break;
-				case ZeroPad:	m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_a); break;
-				case UnitTransfer: m_accel->graph(Z_ACCEL_ORI)->addData(m_currIdx, z_a_); break;
-				}
-			}
-			//m_pTextBrowser->append(QString::number(y_g));
-			if (cbXGyro->isChecked())
-			{
-				switch (m_plotGyro)
-				{
-				case ORIGINAL:		m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_gyro); break;
-				case ZeroPad:		m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_g); break;
-				case UnitTransfer:	m_gyro->graph(X_GYRO_ORI - 3)->addData(m_currIdx, x_g_); break;
-				}
-			}
-			if (cbYGyro->isChecked())
-			{
-				switch (m_plotGyro)
-				{
-				case ORIGINAL:		m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_gyro); break;
-				case ZeroPad:		m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_g); break;
-				case UnitTransfer:	m_gyro->graph(Y_GYRO_ORI - 3)->addData(m_currIdx, y_g_); break;
-				}
-			}
-			if (cbZGyro->isChecked())
-			{
-				switch (m_plotGyro)
-				{
-				case ORIGINAL:		m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_gyro); break;
-				case ZeroPad:		m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_g); break;
-				case UnitTransfer:	m_gyro->graph(Z_GYRO_ORI - 3)->addData(m_currIdx, z_g_); break;
-				}
+				X_sixSide(k * CALIBRATION_SAMPLES + i, 0) = X(i, 0);
+				X_sixSide(k * CALIBRATION_SAMPLES + i, 1) = X(i, 1);
+				X_sixSide(k * CALIBRATION_SAMPLES + i, 2) = X(i, 2);
 			}
 		}
-		break;
+		if (m_side < SIDE_BACK) {
+			m_side = (CALIBRATION_SIDE)((int)m_side + 1);
+			switch (m_side)
+			{
+			case SIDE_UP: m_pTip->setText(u8"陀螺仪向上："); break;
+			case SIDE_DOWN: m_pTip->setText(u8"陀螺仪向下："); break;
+			case SIDE_LEFT: m_pTip->setText(u8"陀螺仪向左："); break;
+			case SIDE_RIGHT: m_pTip->setText(u8"陀螺仪向右："); break;
+			case SIDE_FRONT: m_pTip->setText(u8"陀螺仪向前："); break;
+			case SIDE_BACK: m_pTip->setText(u8"陀螺仪向后："); break;
+			}
+		}
+		else {
+			//收集完成，开始
+			pCalibration = new NewtonCalibration(X_sixSide);
+			pCalibration->solve();
+			QMessageBox(QMessageBox::NoIcon, "", u8"较准完成").exec();
+			pCalibration->get_optimized_result(TK, b);
+		}
 	}
-	case ZEROPADDING:
-		m_accelX.append(x_accel);
-		m_accelY.append(y_accel);
-		m_accelZ.append(z_accel);
-		m_gyroX.append(x_gyro);
-		m_gyroY.append(y_gyro);
-		m_gyroZ.append(z_gyro);
-		break;
-	}
-	m_currIdx++;
 }

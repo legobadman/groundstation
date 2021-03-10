@@ -26,6 +26,22 @@ class GroundStation : public QMainWindow
 		UnitTransfer,	//经单位换算以后的数据
 	};
 
+	enum CALIBRATION_TYPE
+	{
+		ONE_SIDE,
+		SIX_SIDE
+	};
+
+	enum CALIBRATION_SIDE
+	{
+		SIDE_UP,
+		SIDE_DOWN,
+		SIDE_LEFT,
+		SIDE_RIGHT,
+		SIDE_FRONT,
+		SIDE_BACK
+	};
+
 public:
 	GroundStation(QWidget* parent);
 	~GroundStation();
@@ -33,7 +49,6 @@ public:
 	void initSimple();
 	void initPort();
 	void initSimplePlot();
-	void initGlossPlot();
 	void initAccelPlot();
 	void initGyroPlot();
 	void initAnglePlot();
@@ -45,7 +60,8 @@ signals:
 
 public slots:
 	void accel_calibration();
-	void onReadyRead();
+	void on_start_collect4calibration();
+	void six_sided_calibration();
 	void onCustomCOMRead();
 	void MyRealtimeDataSlot();
 	void onAccelTimeout();
@@ -68,8 +84,10 @@ private:
 	QCustomPlot* m_accel;
 	QCustomPlot* m_angle;
 	QCustomPlot* m_gloss;
-	QPushButton* m_pBtn;
+	QPushButton* m_pOneSideBtn;
+	QPushButton* m_pSixSideBtn;
 	QMovie* myMovie;
+	QLabel* m_pTip;
 	QSerialPort m_serialPort;
 	QString m_msgStream;
 	QVector<int> m_accelX;
@@ -90,15 +108,17 @@ private:
 	PlotType mainType;
 
 	//加速度标定参数
-	Matrix3f TK;		//倾斜角矩阵
+	Matrix3f TK;	//倾斜角矩阵
 	Vector3f b;		//bias;
 
 	NewtonCalibration* pCalibration;
 	MatrixXf X;
+	MatrixXf X_sixSide;
 	int m_idxX;
-	bool m_bCalibrating;
 	bool m_bCollect4Calibrate;
-
+	bool m_bAverage4sixside;
+	CALIBRATION_SIDE m_side;
+	CALIBRATION_TYPE m_type;
 	static float g;
 };
 
