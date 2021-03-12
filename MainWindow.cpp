@@ -4,11 +4,15 @@
 
 const float dt = 0.005f; //时间周期
 float angle[3] = { 0 };
+float Q[4] = { 1, 0, 0, 0 };
+float pitch_com = 0, roll_com = 0;
 
-const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
+const float fRad2Deg = 57.295779513f;	//弧度换算角度乘的系数
+const float fDeg2Rad = 0.01745329252;	
 
 #define MIN std::min
 #define MAX std::max
+#define BOUND_ABS_ONE(x) (MAX(-1.0f, MIN(1.0f, (x))))
 
 #define PROCESS_COM
 
@@ -19,30 +23,10 @@ const float fRad2Deg = 57.295779513f; //弧度换算角度乘的系数
 #define Y_GYRO_ORI 4
 #define Z_GYRO_ORI 5
 
-#define CALIBRATION_SAMPLES 300	//每一面较准所采样的数量。
+#define CALIBRATION_SAMPLES 1000	//每一面较准所采样的数量。
 
 //#define USE_MODULE
 float GroundStation::g = 9.7883f;
-
-#ifndef USE_MODULE
-static qint16 zeropadding_offset[6] = {
-	466,
-	-32,
-	5216,
-	58,
-	-99,
-	4
-};
-#else
-static qint16 zeropadding_offset[6] = {
-	-4746,
-	80,
-	7998,
-	-19,
-	23,
-	-3
-};
-#endif
 
 
 
@@ -53,178 +37,131 @@ GroundStation::GroundStation(QWidget* parent)
 	, m_plotAccel(ORIGINAL)
 	, m_plotGyro(ORIGINAL)
 	, mainType(UNKNOWN)
-	, pCalibration(NULL)
+	, m_pCalibration(NULL)
 	, m_pSixSideBtn(NULL)
 	, m_bCollect4Calibrate(false)
 	, m_idxX(0)
+	, m_idxGyro(0)
 	, m_side(SIDE_UP)
 	, m_type(ONE_SIDE)
 	, m_pTip(NULL)
 	, m_bAverage4sixside(false)
+	, m_bGyroCalibrate(false)
+	, m_pTabWidget(NULL)
+	, m_pCalibrationPage(NULL)
+	, m_pAttitudePage(NULL)
 {
-#ifdef PROCESS_COM
-	initSimple();
-	initSimplePlot();
-	X = MatrixXf(CALIBRATION_SAMPLES, 3);
-	m_bAverage4sixside = false;
-	if (m_bAverage4sixside)
-		X_sixSide = MatrixXf(6, 3);
-	else
-		X_sixSide = MatrixXf(6 * CALIBRATION_SAMPLES, 3);
-#else
 	init();
-	initAccelPlot();
-	initGyroPlot();
-	initAnglePlot();
-#endif
-	initPort();
-	initParameters();
 }
 
 GroundStation::~GroundStation()
 {
+	if (m_pCalibration) {
+		delete m_pCalibration;
+	}
 }
 
 void GroundStation::init()
 {
-	m_accel = new QCustomPlot(this);
-	m_accel->setMinimumWidth(400);
-	m_gyro = new QCustomPlot(this);
-	m_angle = new QCustomPlot(this);
-	QHBoxLayout* pMainLayout = new QHBoxLayout;
+	QTabWidget* pTabWidget = new QTabWidget(this);
 
-	QVBoxLayout* pLeftLayout = new QVBoxLayout;
-	QPushButton* pZeroPadding = new QPushButton(u8"零偏校准");
-	pLeftLayout->addWidget(pZeroPadding);
-	connect(pZeroPadding, SIGNAL(clicked(bool)), this, SLOT(prepare_zeropadding(bool)));
-	pMainLayout->addLayout(pLeftLayout);
+	QWidget* pCalibrationPage = initCalibrationPage();
+	QWidget* pAttitudePage = initAttitudePage();
+	pTabWidget->addTab(pCalibrationPage, u8"传感器标定");
+	pTabWidget->addTab(pAttitudePage, u8"姿态解算");
 
-	m_pTextBrowser = new QTextBrowser(this);
-	m_pTextBrowser->setText("");
-	pMainLayout->addWidget(m_pTextBrowser);
-	
-	QVBoxLayout* pVLayout = new QVBoxLayout;
-	pVLayout->addWidget(m_accel);
-	{
-		QHBoxLayout* pAccelHLayout = new QHBoxLayout;
-		cbXAccel = new QCheckBox(u8"X轴");
-		cbYAccel = new QCheckBox(u8"Y轴");
-		cbZAccel = new QCheckBox(u8"Z轴");
-		cbXAccel->setChecked(true);
-		cbYAccel->setChecked(true);
-		cbZAccel->setChecked(true);
+	initCalibrationPlot();
+	initAttitudePlot();
+	initPort();
+	initParameters();
 
-		QButtonGroup* pButtonGroup = new QButtonGroup(this);
-		pButtonGroup->setExclusive(true);
-		QRadioButton* pOriButton = new QRadioButton(u8"原始数据", this);
-		QRadioButton* pUnitButton = new QRadioButton(u8"单位换算", this);
-		QRadioButton* pZeroButton = new QRadioButton(u8"零点漂移", this);
-		pOriButton->setChecked(true);
-		pButtonGroup->addButton(pOriButton);
-		pButtonGroup->addButton(pUnitButton);
-		pButtonGroup->addButton(pZeroButton);
-		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotAccelChanged(QAbstractButton*)));
-
-		pAccelHLayout->addWidget(cbXAccel);
-		pAccelHLayout->addWidget(cbYAccel);
-		pAccelHLayout->addWidget(cbZAccel);
-		pAccelHLayout->addWidget(pOriButton);
-		pAccelHLayout->addWidget(pZeroButton);
-		pAccelHLayout->addWidget(pUnitButton);
-		pVLayout->addLayout(pAccelHLayout);
-	}
-
-	pVLayout->addWidget(m_gyro);
-	{
-		QHBoxLayout* pGyroHLayout = new QHBoxLayout;
-		cbXGyro = new QCheckBox(u8"X轴");
-		cbYGyro = new QCheckBox(u8"Y轴");
-		cbZGyro = new QCheckBox(u8"Z轴");
-		cbXGyro->setChecked(true);
-		cbYGyro->setChecked(true);
-		cbZGyro->setChecked(true);
-
-		QButtonGroup* pButtonGroup = new QButtonGroup(this);
-		pButtonGroup->setExclusive(true);
-		QRadioButton* pOriButton = new QRadioButton(u8"原始数据", this);
-		QRadioButton* pZeroButton = new QRadioButton(u8"零点漂移", this);
-		QRadioButton* pUnitButton = new QRadioButton(u8"单位换算", this);
-		
-		pOriButton->setChecked(true);
-		pButtonGroup->addButton(pOriButton);
-		pButtonGroup->addButton(pUnitButton);
-		pButtonGroup->addButton(pZeroButton);
-		connect(pButtonGroup, SIGNAL(buttonClicked(QAbstractButton*)), this, SLOT(onPlotGyroChanged(QAbstractButton*)));
-
-		pGyroHLayout->addWidget(cbXGyro);
-		pGyroHLayout->addWidget(cbYGyro);
-		pGyroHLayout->addWidget(cbZGyro);
-		pGyroHLayout->addWidget(pOriButton);
-		pGyroHLayout->addWidget(pZeroButton);
-		pGyroHLayout->addWidget(pUnitButton);
-		pVLayout->addLayout(pGyroHLayout);
-	}
-	pVLayout->addWidget(m_angle);
-
-	pMainLayout->addLayout(pVLayout);
-
-	QWidget* pCentralWidget = new QWidget(this);
-	pCentralWidget->setLayout(pMainLayout);
-	this->setCentralWidget(pCentralWidget);
-	this->resize(1304, 691);
+	setCentralWidget(pTabWidget);
+	resize(1304, 691);
 }
 
-void GroundStation::initSimple()
+QWidget* GroundStation::initCalibrationPage()
 {
-	m_accel = new QCustomPlot(this);
+	m_pCalibrationPage = new QWidget;
+
+	m_accel = new QCustomPlot(m_pCalibrationPage);
 	m_accel->setMinimumHeight(600);
 	QVBoxLayout* pMainLayout = new QVBoxLayout;
 
 	QHBoxLayout* pHBoxLayout = new QHBoxLayout;
 
-	m_pOneSideBtn = new QPushButton(this);
+	m_pOneSideBtn = new QPushButton(m_pCalibrationPage);
 	m_pOneSideBtn->setText(u8"加速度计较准");
 	pHBoxLayout->addWidget(m_pOneSideBtn);
 
-	m_pSixSideBtn = new QPushButton(this);
+	m_pSixSideBtn = new QPushButton(m_pCalibrationPage);
 	m_pSixSideBtn->setText(u8"六面较准");
 	pHBoxLayout->addWidget(m_pSixSideBtn);
 
-	myMovie = new QMovie("circle.gif", QByteArray(), m_pOneSideBtn);
-	myMovie->setScaledSize(QSize(20, 20));
-	connect(myMovie, SIGNAL(frameChanged(int)), this, SLOT(setButtonIcon(int)));
-	// if movie doesn't loop forever, force it to.
-	if (myMovie->loopCount() != -1)
-		connect(myMovie, SIGNAL(finished()), myMovie, SLOT(start()));
-	if (myMovie->isValid())
-		myMovie->start();
+	m_pGyroCalibrateBtn = new QPushButton(m_pCalibrationPage);
+	m_pGyroCalibrateBtn->setText(u8"陀螺仪零偏较准");
+	pHBoxLayout->addWidget(m_pGyroCalibrateBtn);
+
+	m_pOneSideBtn->setIcon(QIcon(":/images/copy.png"));
+
+	//myMovie = new QMovie("circle.gif", QByteArray(), m_pOneSideBtn);
+	//myMovie->setScaledSize(QSize(20, 20));
+	//connect(myMovie, SIGNAL(frameChanged(int)), this, SLOT(setButtonIcon(int)));
+	//// if movie doesn't loop forever, force it to.
+	//if (myMovie->loopCount() != -1)
+	//	connect(myMovie, SIGNAL(finished()), myMovie, SLOT(start()));
+	//if (myMovie->isValid())
+	//	myMovie->start();
 
 	connect(m_pOneSideBtn, SIGNAL(clicked()), this, SLOT(accel_calibration()));
 	connect(m_pSixSideBtn, SIGNAL(clicked()), this, SLOT(six_sided_calibration()));
+	connect(m_pGyroCalibrateBtn, SIGNAL(clicked()), this, SLOT(onGyroCalibration()));
 
 	pHBoxLayout->addSpacerItem(new QSpacerItem(100, 20, QSizePolicy::Preferred, QSizePolicy::Expanding));
 
-	m_pTip = new QLabel(this);
+	m_pTip = new QLabel(m_pCalibrationPage);
 	pHBoxLayout->addWidget(m_pTip);
 	m_pTip->setText(u8"陀螺仪向上：");
 
-	QPushButton* pStartBtn = new QPushButton(this);
+	QPushButton* pStartBtn = new QPushButton(m_pCalibrationPage);
 	pStartBtn->setText(u8"开始收集");
 	connect(pStartBtn, SIGNAL(clicked()), this, SLOT(on_start_collect4calibration()));
 	pHBoxLayout->addWidget(pStartBtn);
 
 	pMainLayout->addItem(pHBoxLayout);
 
-	m_pTextBrowser = new QTextBrowser(this);
+	m_pTextBrowser = new QTextBrowser(m_pCalibrationPage);
 	m_pTextBrowser->setText("");
 
 	pMainLayout->addWidget(m_pTextBrowser);
 	pMainLayout->addWidget(m_accel);
 
-	QWidget* pCentralWidget = new QWidget(this);
-	pCentralWidget->setLayout(pMainLayout);
-	this->setCentralWidget(pCentralWidget);
-	this->resize(1304, 691);
+	m_pCalibrationPage->setLayout(pMainLayout);
+	return m_pCalibrationPage;
+}
+
+QWidget* GroundStation::initAttitudePage()
+{
+	QWidget* pPage = new QWidget;
+
+	//QVBoxLayout* pMainLayout = new QVBoxLayout;
+	//QHBoxLayout* pHBoxLayout = new QHBoxLayout;
+	QGridLayout* pGridLayout = new QGridLayout;
+
+	m_attitude_accel = new QCustomPlot(pPage);
+	m_attitude_gyro = new QCustomPlot(pPage);
+	m_attitude_mixed = new QCustomPlot(pPage);
+
+	pGridLayout->addWidget(m_attitude_accel, 0, 0);
+	pGridLayout->addWidget(m_attitude_gyro, 0, 1);
+	pGridLayout->addWidget(m_attitude_mixed, 1, 0);
+
+	//pHBoxLayout->addWidget(m_attitude_accel);
+	//pHBoxLayout->addWidget(m_attitude_gyro);
+	//pMainLayout->addLayout(pHBoxLayout);
+	//pMainLayout->addWidget(m_attitude_mixed);
+
+	pPage->setLayout(pGridLayout);
+	return pPage;
 }
 
 void GroundStation::onPlotAccelChanged(QAbstractButton* pClickedButton)
@@ -305,7 +242,7 @@ void GroundStation::paintEvent(QPaintEvent* event)
 	QMainWindow::paintEvent(event);
 }
 
-void GroundStation::initSimplePlot()
+void GroundStation::initCalibrationPlot()
 {
 	//m_accel->yAxis->setRange(0, 180, Qt::AlignCenter);
 	m_accel->yAxis->setRange(-50, 180);
@@ -326,72 +263,75 @@ void GroundStation::initSimplePlot()
 	dtaccel.start(0);
 }
 
-void GroundStation::initAccelPlot()
+void GroundStation::initAttitudePlot()
 {
-	m_accel->yAxis->setRange(0, 65535, Qt::AlignCenter);
-	m_accel->addGraph();
-	m_accel->graph()->setPen(QPen(Qt::blue));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+	m_attitude_accel->yAxis->setRange(-180, 180);
+	{
+		m_attitude_accel->addGraph();
+		m_attitude_accel->graph()->setPen(QPen(Qt::blue));
+		m_attitude_accel->addGraph();
+		m_attitude_accel->graph()->setPen(QPen(Qt::red));
 
-	m_accel->addGraph();
-	m_accel->graph()->setPen(QPen(Qt::red));
+		connect(m_attitude_accel->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_accel->xAxis2, SLOT(setRange(QCPRange)));
+		connect(m_attitude_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_accel->yAxis2, SLOT(setRange(QCPRange)));
+		connect(&dtAttitude_accel, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	}
 
-	m_accel->addGraph();
-	m_accel->graph()->setPen(QPen(Qt::green));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
-	// make left and bottom axes transfer their ranges to right and top axes:
-	connect(m_accel->xAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->xAxis2, SLOT(setRange(QCPRange)));
-	connect(m_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->yAxis2, SLOT(setRange(QCPRange)));
-	connect(&dtaccel, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
-	dtaccel.start(0);
-}
+	m_attitude_gyro->yAxis->setRange(-180, 180);
+	{
+		m_attitude_gyro->addGraph();
+		m_attitude_gyro->graph()->setPen(QPen(Qt::blue));
+		m_attitude_gyro->addGraph();
+		m_attitude_gyro->graph()->setPen(QPen(Qt::red));
 
-void GroundStation::initGyroPlot()
-{
-	m_gyro->yAxis->setRange(0, 2000, Qt::AlignCenter);
-	m_gyro->addGraph();
-	m_gyro->graph()->setPen(QPen(Qt::blue));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+		connect(m_attitude_gyro->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_gyro->xAxis2, SLOT(setRange(QCPRange)));
+		connect(m_attitude_gyro->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_gyro->yAxis2, SLOT(setRange(QCPRange)));
+		connect(&dtAttitude_gyro, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	}
 
-	m_gyro->addGraph();
-	m_gyro->graph()->setPen(QPen(Qt::red));
+	m_attitude_mixed->yAxis->setRange(-180, 180);
+	{
+		m_attitude_mixed->addGraph();
+		m_attitude_mixed->graph()->setPen(QPen(Qt::blue));
+		m_attitude_mixed->addGraph();
+		m_attitude_mixed->graph()->setPen(QPen(Qt::red));
 
-	m_gyro->addGraph();
-	m_gyro->graph()->setPen(QPen(Qt::green));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
-	// make left and bottom axes transfer their ranges to right and top axes:
-	connect(m_gyro->xAxis, SIGNAL(rangeChanged(QCPRange)), m_gyro->xAxis2, SLOT(setRange(QCPRange)));
-	connect(m_gyro->yAxis, SIGNAL(rangeChanged(QCPRange)), m_gyro->yAxis2, SLOT(setRange(QCPRange)));
-	connect(&dtgyro, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
-	dtgyro.start(0);
-}
-
-void GroundStation::initAnglePlot()
-{
-	m_angle->yAxis->setRange(0, 360, Qt::AlignCenter);
-	m_angle->addGraph();
-	m_angle->graph()->setPen(QPen(Qt::blue));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
-
-	m_angle->addGraph();
-	m_angle->graph()->setPen(QPen(Qt::red));
-
-	m_angle->addGraph();
-	m_angle->graph()->setPen(QPen(Qt::green));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
-	// make left and bottom axes transfer their ranges to right and top axes:
-	connect(m_angle->xAxis, SIGNAL(rangeChanged(QCPRange)), m_angle->xAxis2, SLOT(setRange(QCPRange)));
-	connect(m_angle->yAxis, SIGNAL(rangeChanged(QCPRange)), m_angle->yAxis2, SLOT(setRange(QCPRange)));
-	connect(&dtangle, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
-	dtangle.start(0);
+		connect(m_attitude_mixed->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_mixed->xAxis2, SLOT(setRange(QCPRange)));
+		connect(m_attitude_mixed->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_mixed->yAxis2, SLOT(setRange(QCPRange)));
+		connect(&dtAttitude_mix, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+	}
 }
 
 void GroundStation::initParameters()
 {
-	TK << 1, 0, 0,
+	X = MatrixXf(CALIBRATION_SAMPLES, 3);
+	m_bAverage4sixside = false;
+	if (m_bAverage4sixside)
+		X_sixSide = MatrixXf(6, 3);
+	else
+		X_sixSide = MatrixXf(6 * CALIBRATION_SAMPLES, 3);
+
+	//上一次的测量结果。
+	//(1.00229812, -0.00134844379, 0.000177600203)
+	//(0.00134844379, 1.06192446, -0.00104694557)
+	//(-0.000177600203, 0.00104694557, 0.981337011)
+	//TKa << 1, 0, 0,
+	//	0, 1, 0,
+	//	0, 0, 1;
+	Q[0] = 1; Q[1] = 0; Q[2] = 0; Q[3] = 0;
+	TKa << 1.00229812f, -0.00134844379f, 0.000177600203f,
+		0.00134844379f, 1.06192446f, -0.00104694557f,
+		-0.000177600203f, 0.00104694557f, 0.981337011f;
+	Tkg << 1, 0, 0,
 		0, 1, 0,
 		0, 0, 1;
-	b << 0, 0, 0;
+	//(-0.0504232645, 0.00252529467, 0.171601593)
+	ba << -0.0504232645f, 0.00252529467f, 0.171601593f;
+	//ba << 0, 0, 0;
+	//(1.76019275, 0.981384218, 0.419433594)
+	bg << 1.76019275f, 0.981384218f, 0.419433594f;
+	//bg << 0, 0, 0;
+	bg_ << 0, 0, 0;
 }
 
 void GroundStation::MyRealtimeDataSlot()
@@ -416,50 +356,26 @@ void GroundStation::MyRealtimeDataSlot()
 		m_gloss->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
 		m_gloss->replot(QCustomPlot::rpQueuedReplot);
 	}
+	if (m_attitude_accel)
+	{
+		m_attitude_accel->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
+		m_attitude_accel->replot(QCustomPlot::rpQueuedReplot);
+	}
+	if (m_attitude_gyro)
+	{
+		m_attitude_gyro->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
+		m_attitude_gyro->replot(QCustomPlot::rpQueuedReplot);
+	}
+	if (m_attitude_mixed)
+	{
+		m_attitude_mixed->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
+		m_attitude_mixed->replot(QCustomPlot::rpQueuedReplot);
+	}
 }
 
 void GroundStation::setButtonIcon(int)
 {
 	m_pOneSideBtn->setIcon(QIcon(myMovie->currentPixmap()));
-}
-
-void GroundStation::prepare_zeropadding(bool)
-{
-	QMessageBox msgBox(QMessageBox::Information, "", u8"请将飞控板置于参考平面", QMessageBox::Ok | QMessageBox::Cancel);
-	int ret = msgBox.exec();
-	if (ret == QMessageBox::Ok) {
-		zeropad = ZEROPADDING;
-		connect(&zeropad_timer, SIGNAL(timeout()), this, SLOT(calculated_zeropad()));
-		zeropad_timer.start(30000);
-	}
-	else {
-		zeropad = NO_ZEROPAD;
-	}
-}
-
-void GroundStation::calculated_zeropad()
-{
-	int sum_accelX = 0, sum_accelY = 0, sum_accelZ = 0, sum_gyroX = 0, sum_gyroY = 0, sum_gyroZ = 0;
-	int n = m_accelX.size();
-	for (int i = 0; i < n; i++)
-	{
-		sum_accelX += m_accelX[i];
-		sum_accelY += m_accelY[i];
-		sum_accelZ += m_accelZ[i];
-		sum_gyroX += m_gyroX[i];
-		sum_gyroY += m_gyroY[i];
-		sum_gyroZ += m_gyroZ[i];
-	}
-	zeropadding_offset[X_ACCEL_ORI] = sum_accelX / n;
-	zeropadding_offset[Y_ACCEL_ORI] = sum_accelY / n;
-	zeropadding_offset[Z_ACCEL_ORI] = sum_accelZ / n;
-	zeropadding_offset[X_GYRO_ORI] = sum_gyroX / n;
-	zeropadding_offset[Y_GYRO_ORI] = sum_gyroY / n;
-	zeropadding_offset[Z_GYRO_ORI] = sum_gyroZ / n;
-	zeropad = ZEROPADDED;
-	QMessageBox msgBox(QMessageBox::Information, "", u8"校准完成。", QMessageBox::Ok);
-	msgBox.exec();
-	zeropad_timer.stop();
 }
 
 void GroundStation::onCustomCOMRead()
@@ -508,13 +424,45 @@ void GroundStation::onCustomCOMRead()
 			float z_gyro = pairs[5].toFloat();
 
 			Vector3f a_(x_accel, y_accel, z_accel);
-			Vector3f a_calibrated = TK * (a_ + b);
+			Vector3f a_calibrated = TKa * (a_ + ba);
+			Vector3f g_(x_gyro, y_gyro, z_gyro);
+			Vector3f g_calibrated = Tkg * (g_ + bg);
 
-			m_pTextBrowser->append(QString("%1, %2, %3\n").arg(a_calibrated(0)).arg(a_calibrated(1)).arg(a_calibrated(2)));
+			m_pTextBrowser->append(QString("%1, %2, %3, %4, %5, %6\n").arg(a_calibrated(0)).arg(a_calibrated(1)).arg(a_calibrated(2)).arg(g_calibrated(0)).arg(g_calibrated(1)).arg(g_calibrated(2)));
 
 			m_accel->graph(0)->addData(m_currIdx, a_calibrated(0));
 			m_accel->graph(1)->addData(m_currIdx, a_calibrated(1));
 			m_accel->graph(2)->addData(m_currIdx, a_calibrated(2));
+
+			//1.角速度积分得到的姿态。
+			float pitch_a = asin(BOUND_ABS_ONE(a_calibrated(0))) * fRad2Deg;
+			float roll_a = atan(a_calibrated(1) / a_calibrated(2)) * fRad2Deg;
+			m_attitude_accel->graph(0)->addData(m_currIdx, pitch_a);
+			m_attitude_accel->graph(1)->addData(m_currIdx, roll_a);
+
+			//2.角速度积分得到的姿态。
+			float wx = g_calibrated(0) * fDeg2Rad;
+			float wy = g_calibrated(1) * fDeg2Rad;
+			float wz = g_calibrated(2) * fDeg2Rad;
+			static float Ts = 0.01f;
+
+			Q[0] = Q[0] + (-wx * Q[1] - wy * Q[2] - wz * Q[3]) * Ts;
+			Q[1] = Q[1] + (wx * Q[0] + wz * Q[2] - wy * Q[3]) * Ts;
+			Q[2] = Q[2] + (wy * Q[0] - wz * Q[1] + wx * Q[3]) * Ts;
+			Q[3] = Q[3] + (wz * Q[0] + wy * Q[1] - wx * Q[2]) * Ts;
+
+			//yaw = atan2(2 * Q[1] * Q[2] + 2 * Q[0] * Q[3], -2 * Q[2] * Q[2] - 2 * Q[3] * Q[3] + 1) * 57.3;
+			float pitch_g = asin(BOUND_ABS_ONE(-2 * Q[1] * Q[3] + 2 * Q[0] * Q[2])) * 57.3;
+			float roll_g = atan2(2 * Q[2] * Q[3] + 2 * Q[0] * Q[1], -2 * Q[1] * Q[1] - 2 * Q[2] * Q[2] + 1) * 57.3;
+			m_attitude_gyro->graph(0)->addData(m_currIdx, pitch_g);
+			m_attitude_gyro->graph(1)->addData(m_currIdx, roll_g);
+
+			//3.互补滤波得到的姿态。
+			const float factor = 0.9f;
+			pitch_com = factor * (pitch_com + Ts * wy) + (1 - factor) * pitch_a;
+			roll_com = factor * (roll_com + Ts * wx) + (1 - factor) * roll_a;
+			m_attitude_mixed->graph(0)->addData(m_currIdx, pitch_com);
+			m_attitude_mixed->graph(1)->addData(m_currIdx, roll_com);
 
 			if (m_bCollect4Calibrate)
 			{
@@ -530,6 +478,22 @@ void GroundStation::onCustomCOMRead()
 					m_bCollect4Calibrate = false;
 					m_idxX = 0;
 					emit calibrationReady(X);
+				}
+			}
+			if (m_bGyroCalibrate)
+			{
+				if (m_idxGyro < CALIBRATION_SAMPLES)
+				{
+					bg_(0) += x_gyro;
+					bg_(1) += y_gyro;
+					bg_(2) += z_gyro;
+					m_idxGyro++;
+				}
+				else
+				{
+					m_bGyroCalibrate = false;
+					m_idxGyro = 0;
+					bg = -bg_ / CALIBRATION_SAMPLES;
 				}
 			}
 			m_currIdx++;
@@ -551,6 +515,11 @@ void GroundStation::six_sided_calibration()
 	m_pTip->setText(u8"陀螺仪向上：");
 }
 
+void GroundStation::onGyroCalibration()
+{
+	m_bGyroCalibrate = true;
+}
+
 void GroundStation::on_start_collect4calibration()
 {
 	m_bCollect4Calibrate = true;
@@ -559,10 +528,10 @@ void GroundStation::on_start_collect4calibration()
 void GroundStation::onCalibrationReady(const MatrixXf& X)
 {
 	if (m_type == ONE_SIDE) {
-		pCalibration = new NewtonCalibration(X);
-		pCalibration->solve();
+		m_pCalibration = new NewtonCalibration(X);
+		m_pCalibration->solve();
 		QMessageBox(QMessageBox::NoIcon, "", u8"较准完成").exec();
-		pCalibration->get_optimized_result(TK, b);
+		m_pCalibration->get_optimized_result(TKa, ba);
 	}
 	else if (m_type == SIX_SIDE)
 	{
@@ -604,10 +573,10 @@ void GroundStation::onCalibrationReady(const MatrixXf& X)
 		}
 		else {
 			//收集完成，开始
-			pCalibration = new NewtonCalibration(X_sixSide);
-			pCalibration->solve();
+			m_pCalibration = new NewtonCalibration(X_sixSide);
+			m_pCalibration->solve();
 			QMessageBox(QMessageBox::NoIcon, "", u8"较准完成").exec();
-			pCalibration->get_optimized_result(TK, b);
+			m_pCalibration->get_optimized_result(TKa, ba);
 		}
 	}
 }

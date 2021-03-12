@@ -46,9 +46,11 @@ public:
 	GroundStation(QWidget* parent);
 	~GroundStation();
 	void init();
-	void initSimple();
+	QWidget* initCalibrationPage();
+	QWidget* initAttitudePage();
 	void initPort();
-	void initSimplePlot();
+	void initCalibrationPlot();
+	void initAttitudePlot();
 	void initAccelPlot();
 	void initGyroPlot();
 	void initAnglePlot();
@@ -66,12 +68,11 @@ public slots:
 	void MyRealtimeDataSlot();
 	void onAccelTimeout();
 	void onGyroTimeout();
-	void prepare_zeropadding(bool);
-	void calculated_zeropad();
 	void onPlotAccelChanged(QAbstractButton* pClickedButton);
 	void onPlotGyroChanged(QAbstractButton* pClickedButton);
 	void onCalibrationReady(const MatrixXf& X);
 	void setButtonIcon(int);
+	void onGyroCalibration();
 
 protected:
 	void paintEvent(QPaintEvent* event);
@@ -84,8 +85,18 @@ private:
 	QCustomPlot* m_accel;
 	QCustomPlot* m_angle;
 	QCustomPlot* m_gloss;
+
+	QCustomPlot* m_attitude_accel;
+	QCustomPlot* m_attitude_gyro;
+	QCustomPlot* m_attitude_mixed;
+	
+	QTabWidget* m_pTabWidget;
+	QWidget* m_pCalibrationPage;
+	QWidget* m_pAttitudePage;
+
 	QPushButton* m_pOneSideBtn;
 	QPushButton* m_pSixSideBtn;
+	QPushButton* m_pGyroCalibrateBtn;
 	QMovie* myMovie;
 	QLabel* m_pTip;
 	QSerialPort m_serialPort;
@@ -102,20 +113,28 @@ private:
 	QTimer dtangle;
 	QTimer dtgloss;
 	QTimer zeropad_timer;
+	QTimer dtAttitude_accel;
+	QTimer dtAttitude_gyro;
+	QTimer dtAttitude_mix;
 	ZeroPadding zeropad;
 	PlotType m_plotAccel;
 	PlotType m_plotGyro;
 	PlotType mainType;
 
 	//加速度标定参数
-	Matrix3f TK;	//倾斜角矩阵
-	Vector3f b;		//bias;
+	Matrix3f TKa;	//倾斜角矩阵
+	Matrix3f Tkg;	//陀螺仪参数矩阵
+	Vector3f ba;		//bias;
+	Vector3f bg;
+	Vector3f bg_;	//用于收集。
 
-	NewtonCalibration* pCalibration;
+	NewtonCalibration* m_pCalibration;
 	MatrixXf X;
 	MatrixXf X_sixSide;
 	int m_idxX;
+	int m_idxGyro;
 	bool m_bCollect4Calibrate;
+	bool m_bGyroCalibrate;
 	bool m_bAverage4sixside;
 	CALIBRATION_SIDE m_side;
 	CALIBRATION_TYPE m_type;
