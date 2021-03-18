@@ -8,6 +8,16 @@
 
 using namespace Eigen;
 
+//struct Quaternion
+//{
+//	float q0;
+//	float q1;
+//	float q2;
+//	float q3;
+//	Quaternion() : q0(0), q1(0), q2(0), q3(0) {}
+//	Quaternion(float q0, float q1, float q2, float q3) : q0(q0), q1(q1), q2(q2), q3(q3) {}
+//};
+
 class GroundStation : public QMainWindow
 {
 	Q_OBJECT
@@ -51,9 +61,6 @@ public:
 	void initPort();
 	void initCalibrationPlot();
 	void initAttitudePlot();
-	void initAccelPlot();
-	void initGyroPlot();
-	void initAnglePlot();
 	void initParameters();
 
 signals:
@@ -74,6 +81,9 @@ public slots:
 	void setButtonIcon(int);
 	void onGyroCalibration();
 
+private:
+	QQuaternion m_Q;
+
 protected:
 	void paintEvent(QPaintEvent* event);
 
@@ -88,6 +98,7 @@ private:
 
 	QCustomPlot* m_attitude_accel;
 	QCustomPlot* m_attitude_gyro;
+	QCustomPlot* m_attitude_com_filter;
 	QCustomPlot* m_attitude_mixed;
 	
 	QTabWidget* m_pTabWidget;
@@ -115,7 +126,8 @@ private:
 	QTimer zeropad_timer;
 	QTimer dtAttitude_accel;
 	QTimer dtAttitude_gyro;
-	QTimer dtAttitude_mix;
+	QTimer dtAttitude_com;
+	QTimer dtAttitude_mixed;
 	ZeroPadding zeropad;
 	PlotType m_plotAccel;
 	PlotType m_plotGyro;

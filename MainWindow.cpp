@@ -2,32 +2,20 @@
 #include "MainWindow.h"
 #include "moc_MainWindow.cpp"
 
-const float dt = 0.005f; //时间周期
 float angle[3] = { 0 };
 float Q[4] = { 1, 0, 0, 0 };
 float pitch_com = 0, roll_com = 0;
+float T = 0.01f;
 
 const float fRad2Deg = 57.295779513f;	//弧度换算角度乘的系数
-const float fDeg2Rad = 0.01745329252;	
+const float fDeg2Rad = 0.01745329252f;	
 
 #define MIN std::min
 #define MAX std::max
 #define BOUND_ABS_ONE(x) (MAX(-1.0f, MIN(1.0f, (x))))
-
-#define PROCESS_COM
-
-#define X_ACCEL_ORI 0
-#define Y_ACCEL_ORI 1
-#define Z_ACCEL_ORI 2
-#define X_GYRO_ORI 3
-#define Y_GYRO_ORI 4
-#define Z_GYRO_ORI 5
-
 #define CALIBRATION_SAMPLES 1000	//每一面较准所采样的数量。
 
-//#define USE_MODULE
 float GroundStation::g = 9.7883f;
-
 
 
 GroundStation::GroundStation(QWidget* parent)
@@ -139,26 +127,24 @@ QWidget* GroundStation::initCalibrationPage()
 	return m_pCalibrationPage;
 }
 
+#define PLOT_ONLY_MIXED2	//
+
 QWidget* GroundStation::initAttitudePage()
 {
 	QWidget* pPage = new QWidget;
-
-	//QVBoxLayout* pMainLayout = new QVBoxLayout;
-	//QHBoxLayout* pHBoxLayout = new QHBoxLayout;
 	QGridLayout* pGridLayout = new QGridLayout;
 
+#ifndef PLOT_ONLY_MIXED
 	m_attitude_accel = new QCustomPlot(pPage);
 	m_attitude_gyro = new QCustomPlot(pPage);
-	m_attitude_mixed = new QCustomPlot(pPage);
-
+	m_attitude_com_filter = new QCustomPlot(pPage);
 	pGridLayout->addWidget(m_attitude_accel, 0, 0);
 	pGridLayout->addWidget(m_attitude_gyro, 0, 1);
-	pGridLayout->addWidget(m_attitude_mixed, 1, 0);
-
-	//pHBoxLayout->addWidget(m_attitude_accel);
-	//pHBoxLayout->addWidget(m_attitude_gyro);
-	//pMainLayout->addLayout(pHBoxLayout);
-	//pMainLayout->addWidget(m_attitude_mixed);
+	pGridLayout->addWidget(m_attitude_com_filter, 1, 0);
+#else
+	m_attitude_mixed = new QCustomPlot(pPage);
+	pGridLayout->addWidget(m_attitude_mixed, 0, 0);
+#endif
 
 	pPage->setLayout(pGridLayout);
 	return pPage;
@@ -214,12 +200,10 @@ void GroundStation::initPort()
 			m_serialPort.setBaudRate(QSerialPort::Baud115200);
 			m_serialPort.clearError();
 			m_serialPort.clear();
-			#ifdef PROCESS_COM
+
 			connect(&m_serialPort, SIGNAL(readyRead()), this, SLOT(onCustomCOMRead()));
 			connect(this, SIGNAL(calibrationReady(const MatrixXf&)), this,
 				SLOT(onCalibrationReady(const MatrixXf&)));
-			#else
-			#endif
 			m_serialPort.open(QIODevice::ReadOnly);
 		}
 	}
@@ -237,25 +221,36 @@ void GroundStation::onGyroTimeout()
 	m_gyro->replot(QCustomPlot::rpQueuedReplot);
 }
 
+static void checkIcon(const QIcon& i1)
+{
+	for (int modeNo = 0; modeNo <= QIcon::Selected; modeNo++) {
+		QIcon::Mode mode = (QIcon::Mode)modeNo;
+		for (int stateNo = 0; stateNo <= QIcon::On; stateNo++) {
+			QIcon::State state = (QIcon::State)stateNo;
+			QList<QSize> sizes = i1.availableSizes(mode, state);
+			qDebug("%d sizes for %d %d", sizes.size(), mode, state);
+		}
+	}
+}
+
 void GroundStation::paintEvent(QPaintEvent* event)
 {
+	checkIcon(m_pOneSideBtn->icon());
 	QMainWindow::paintEvent(event);
 }
 
 void GroundStation::initCalibrationPlot()
 {
-	//m_accel->yAxis->setRange(0, 180, Qt::AlignCenter);
 	m_accel->yAxis->setRange(-50, 180);
 	m_accel->addGraph();
 	m_accel->graph()->setPen(QPen(Qt::blue));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
 
 	m_accel->addGraph();
 	m_accel->graph()->setPen(QPen(Qt::red));
 
 	m_accel->addGraph();
 	m_accel->graph()->setPen(QPen(Qt::green));
-	//m_plot->graph()->setBrush(QBrush(QColor(0, 0, 255, 20)));
+
 	// make left and bottom axes transfer their ranges to right and top axes:
 	connect(m_accel->xAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->xAxis2, SLOT(setRange(QCPRange)));
 	connect(m_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_accel->yAxis2, SLOT(setRange(QCPRange)));
@@ -265,40 +260,64 @@ void GroundStation::initCalibrationPlot()
 
 void GroundStation::initAttitudePlot()
 {
-	m_attitude_accel->yAxis->setRange(-180, 180);
+	if (m_attitude_accel)
 	{
-		m_attitude_accel->addGraph();
-		m_attitude_accel->graph()->setPen(QPen(Qt::blue));
-		m_attitude_accel->addGraph();
-		m_attitude_accel->graph()->setPen(QPen(Qt::red));
+		m_attitude_accel->yAxis->setRange(-180, 180);
+		{
+			m_attitude_accel->addGraph();
+			m_attitude_accel->graph()->setPen(QPen(Qt::blue));
+			m_attitude_accel->addGraph();
+			m_attitude_accel->graph()->setPen(QPen(Qt::red));
 
-		connect(m_attitude_accel->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_accel->xAxis2, SLOT(setRange(QCPRange)));
-		connect(m_attitude_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_accel->yAxis2, SLOT(setRange(QCPRange)));
-		connect(&dtAttitude_accel, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+			connect(m_attitude_accel->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_accel->xAxis2, SLOT(setRange(QCPRange)));
+			connect(m_attitude_accel->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_accel->yAxis2, SLOT(setRange(QCPRange)));
+			connect(&dtAttitude_accel, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+		}
 	}
-
-	m_attitude_gyro->yAxis->setRange(-180, 180);
+	if (m_attitude_gyro)
 	{
-		m_attitude_gyro->addGraph();
-		m_attitude_gyro->graph()->setPen(QPen(Qt::blue));
-		m_attitude_gyro->addGraph();
-		m_attitude_gyro->graph()->setPen(QPen(Qt::red));
+		m_attitude_gyro->yAxis->setRange(-180, 180);
+		{
+			m_attitude_gyro->addGraph();
+			m_attitude_gyro->graph()->setPen(QPen(Qt::blue));
+			m_attitude_gyro->addGraph();
+			m_attitude_gyro->graph()->setPen(QPen(Qt::red));
 
-		connect(m_attitude_gyro->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_gyro->xAxis2, SLOT(setRange(QCPRange)));
-		connect(m_attitude_gyro->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_gyro->yAxis2, SLOT(setRange(QCPRange)));
-		connect(&dtAttitude_gyro, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+			connect(m_attitude_gyro->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_gyro->xAxis2, SLOT(setRange(QCPRange)));
+			connect(m_attitude_gyro->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_gyro->yAxis2, SLOT(setRange(QCPRange)));
+			connect(&dtAttitude_gyro, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+		}
 	}
-
-	m_attitude_mixed->yAxis->setRange(-180, 180);
+	if (m_attitude_com_filter)
 	{
+		m_attitude_com_filter->yAxis->setRange(-180, 180);
+		{
+			m_attitude_com_filter->addGraph();
+			m_attitude_com_filter->graph()->setPen(QPen(Qt::blue));
+			m_attitude_com_filter->addGraph();
+			m_attitude_com_filter->graph()->setPen(QPen(Qt::red));
+
+			connect(m_attitude_com_filter->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_com_filter->xAxis2, SLOT(setRange(QCPRange)));
+			connect(m_attitude_com_filter->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_com_filter->yAxis2, SLOT(setRange(QCPRange)));
+			connect(&dtAttitude_com, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+		}
+	}
+	if (m_attitude_mixed)
+	{
+		m_attitude_mixed->yAxis->setRange(-180, 180);
 		m_attitude_mixed->addGraph();
 		m_attitude_mixed->graph()->setPen(QPen(Qt::blue));
 		m_attitude_mixed->addGraph();
 		m_attitude_mixed->graph()->setPen(QPen(Qt::red));
 
+		m_attitude_mixed->addGraph();
+		m_attitude_mixed->graph()->setPen(QPen(QColor(153, 217, 234)));
+		m_attitude_mixed->addGraph();
+		m_attitude_mixed->graph()->setPen(QPen(QColor(255, 128, 255)));
+
 		connect(m_attitude_mixed->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_mixed->xAxis2, SLOT(setRange(QCPRange)));
 		connect(m_attitude_mixed->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_mixed->yAxis2, SLOT(setRange(QCPRange)));
-		connect(&dtAttitude_mix, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+		connect(&dtAttitude_mixed, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
 	}
 }
 
@@ -366,6 +385,11 @@ void GroundStation::MyRealtimeDataSlot()
 		m_attitude_gyro->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
 		m_attitude_gyro->replot(QCustomPlot::rpQueuedReplot);
 	}
+	if (m_attitude_com_filter)
+	{
+		m_attitude_com_filter->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
+		m_attitude_com_filter->replot(QCustomPlot::rpQueuedReplot);
+	}
 	if (m_attitude_mixed)
 	{
 		m_attitude_mixed->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
@@ -376,6 +400,34 @@ void GroundStation::MyRealtimeDataSlot()
 void GroundStation::setButtonIcon(int)
 {
 	m_pOneSideBtn->setIcon(QIcon(myMovie->currentPixmap()));
+}
+
+QQuaternion Quaternion_Diff(Vector3f w, QQuaternion q)
+{
+	QMatrix4x4 A(0, -w(0)/2.0, -w(1)/2.0, -w(2)/2.0,
+				w(0)/2.0, 0, w(2)/2.0, -w(1)/2.0,
+				w(1)/2.0, -w(2)/2.0, 0, w(0)/2.0,
+				w(2)/2.0, w(1)/2.0, -w(0)/2.0, 0);
+
+	QVector4D q_(q.scalar(), q.x(), q.y(), q.z());
+	QVector4D q_diff_vec = A * q_;
+	QQuaternion q_diff(q_diff_vec[0], q_diff_vec[1], q_diff_vec[2], q_diff_vec[3]);
+	return q_diff;
+}
+
+QQuaternion Quaternion_RungeKutta4(QQuaternion q0, Vector3f w)
+{
+	q0 = q0.normalized();
+	QQuaternion K1 = Quaternion_Diff(w, q0);
+	QQuaternion q1 = (q0 + T / 2.0 * K1).normalized();
+	QQuaternion K2 = Quaternion_Diff(w, q1);
+	QQuaternion q2 = (q0 + T / 2.0 * K2).normalized();
+	QQuaternion K3 = Quaternion_Diff(w, q2);
+	QQuaternion q3 = (q0 + T * K3);
+	QQuaternion K4 = Quaternion_Diff(w, q3);
+	QQuaternion q = q0 + T / 6.0 * (K1 + 2 * K2 + 2 * K3 + K4);
+	q = q.normalized();
+	return q;
 }
 
 void GroundStation::onCustomCOMRead()
@@ -430,39 +482,45 @@ void GroundStation::onCustomCOMRead()
 
 			m_pTextBrowser->append(QString("%1, %2, %3, %4, %5, %6\n").arg(a_calibrated(0)).arg(a_calibrated(1)).arg(a_calibrated(2)).arg(g_calibrated(0)).arg(g_calibrated(1)).arg(g_calibrated(2)));
 
-			m_accel->graph(0)->addData(m_currIdx, a_calibrated(0));
-			m_accel->graph(1)->addData(m_currIdx, a_calibrated(1));
-			m_accel->graph(2)->addData(m_currIdx, a_calibrated(2));
-
 			//1.角速度积分得到的姿态。
 			float pitch_a = asin(BOUND_ABS_ONE(a_calibrated(0))) * fRad2Deg;
 			float roll_a = atan(a_calibrated(1) / a_calibrated(2)) * fRad2Deg;
-			m_attitude_accel->graph(0)->addData(m_currIdx, pitch_a);
-			m_attitude_accel->graph(1)->addData(m_currIdx, roll_a);
 
 			//2.角速度积分得到的姿态。
 			float wx = g_calibrated(0) * fDeg2Rad;
 			float wy = g_calibrated(1) * fDeg2Rad;
 			float wz = g_calibrated(2) * fDeg2Rad;
-			static float Ts = 0.01f;
 
-			Q[0] = Q[0] + (-wx * Q[1] - wy * Q[2] - wz * Q[3]) * Ts;
-			Q[1] = Q[1] + (wx * Q[0] + wz * Q[2] - wy * Q[3]) * Ts;
-			Q[2] = Q[2] + (wy * Q[0] - wz * Q[1] + wx * Q[3]) * Ts;
-			Q[3] = Q[3] + (wz * Q[0] + wy * Q[1] - wx * Q[2]) * Ts;
-
-			//yaw = atan2(2 * Q[1] * Q[2] + 2 * Q[0] * Q[3], -2 * Q[2] * Q[2] - 2 * Q[3] * Q[3] + 1) * 57.3;
-			float pitch_g = asin(BOUND_ABS_ONE(-2 * Q[1] * Q[3] + 2 * Q[0] * Q[2])) * 57.3;
-			float roll_g = atan2(2 * Q[2] * Q[3] + 2 * Q[0] * Q[1], -2 * Q[1] * Q[1] - 2 * Q[2] * Q[2] + 1) * 57.3;
-			m_attitude_gyro->graph(0)->addData(m_currIdx, pitch_g);
-			m_attitude_gyro->graph(1)->addData(m_currIdx, roll_g);
+			Vector3f w(wx, wy, wz);
+			//里面的项是取反的，不知道为什么要取反才能使得pitch和加速度估计的正负性相同。
+			float pitch_g = asin(BOUND_ABS_ONE(-2 * (m_Q.scalar() * m_Q.y() - m_Q.x() * m_Q.z()))) * fRad2Deg;
+			float roll_g = atan2(2 * m_Q.y() * m_Q.z() + 2 * m_Q.scalar() * m_Q.x(), 
+								-2 * m_Q.x() * m_Q.x() - 2 * m_Q.y() * m_Q.y() + 1) * fRad2Deg;
+			m_Q = Quaternion_RungeKutta4(m_Q, w);
 
 			//3.互补滤波得到的姿态。
 			const float factor = 0.9f;
+			static float Ts = 0.01f;
 			pitch_com = factor * (pitch_com + Ts * wy) + (1 - factor) * pitch_a;
 			roll_com = factor * (roll_com + Ts * wx) + (1 - factor) * roll_a;
-			m_attitude_mixed->graph(0)->addData(m_currIdx, pitch_com);
-			m_attitude_mixed->graph(1)->addData(m_currIdx, roll_com);
+
+			m_accel->graph(0)->addData(m_currIdx, a_calibrated(0));
+			m_accel->graph(1)->addData(m_currIdx, a_calibrated(1));
+			m_accel->graph(2)->addData(m_currIdx, a_calibrated(2));
+
+#ifdef PLOT_ONLY_MIXED
+			m_attitude_mixed->graph(0)->addData(m_currIdx, pitch_a);
+			m_attitude_mixed->graph(1)->addData(m_currIdx, roll_a);
+			m_attitude_mixed->graph(2)->addData(m_currIdx, pitch_com);
+			m_attitude_mixed->graph(3)->addData(m_currIdx, roll_com);
+#else
+			m_attitude_accel->graph(0)->addData(m_currIdx, pitch_a);
+			m_attitude_accel->graph(1)->addData(m_currIdx, roll_a);
+			m_attitude_gyro->graph(0)->addData(m_currIdx, pitch_g);
+			m_attitude_gyro->graph(1)->addData(m_currIdx, roll_g);
+			m_attitude_com_filter->graph(0)->addData(m_currIdx, pitch_com);
+			m_attitude_com_filter->graph(1)->addData(m_currIdx, roll_com);
+#endif
 
 			if (m_bCollect4Calibrate)
 			{
