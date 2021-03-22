@@ -8,15 +8,29 @@
 
 using namespace Eigen;
 
-//struct Quaternion
-//{
-//	float q0;
-//	float q1;
-//	float q2;
-//	float q3;
-//	Quaternion() : q0(0), q1(0), q2(0), q3(0) {}
-//	Quaternion(float q0, float q1, float q2, float q3) : q0(q0), q1(q1), q2(q2), q3(q3) {}
-//};
+
+struct Angular_Pos
+{
+	float roll;
+	float pitch;
+	float yaw;
+	Angular_Pos() :roll(0), pitch(0), yaw(0) {}
+	Angular_Pos(float p, float r, float y) : roll(r), pitch(p), yaw(y) {}
+};
+
+struct Original_Data
+{
+	float ax;
+	float ay;
+	float az;
+	float gx;
+	float gy;
+	float gz;
+
+	Original_Data() :ax(0), ay(0), az(0), gx(0), gy(0), gz(0) {}
+	Original_Data(float ax, float ay, float az, float gx, float gy, float gz)
+		: ax(ax), ay(ay), az(az), gx(gx), gy(gy), gz(gz) {}
+};
 
 class GroundStation : public QMainWindow
 {
@@ -52,16 +66,27 @@ class GroundStation : public QMainWindow
 		SIDE_BACK
 	};
 
+	enum ESTIMATION_WAY
+	{
+		NONE,
+		COMPLEMENTION_FILTER,	//互补滤波
+		ACCELMETER,	//仅用加速度计算。
+		GYRO,		//仅用陀螺仪计算。
+		EKF,		//扩展卡尔曼滤波
+	};
+
 public:
 	GroundStation(QWidget* parent);
 	~GroundStation();
 	void init();
 	QWidget* initCalibrationPage();
 	QWidget* initAttitudePage();
+	QWidget* initEKFPage();
 	void initPort();
 	void initCalibrationPlot();
 	void initAttitudePlot();
 	void initParameters();
+	void initMatrix();
 
 signals:
 	void operate(const QString&);
@@ -80,16 +105,32 @@ public slots:
 	void onCalibrationReady(const MatrixXf& X);
 	void setButtonIcon(int);
 	void onGyroCalibration();
+	void estimateByEKFOffline();
 
 private:
-	QQuaternion m_Q;
+	Angular_Pos EstimateByAccel(float xaccel, float yaccel, float zaccel);
+	Angular_Pos EstimateByGyro(float gyro_x, float gyro_y, float gyro_z);
+	Angular_Pos EstimateByComplementry(float ax, float ay, float az, float gx, float gy, float gz);
+	Angular_Pos EstimateByEKF(float ax, float ay, float az, float gx, float gy, float gz);
 
+	QQuaternion MatrixDotQ(QMatrix4x4 M, QQuaternion q);
+
+private:
+	Vector4f m_qk;
+	//QQuaternion m_qekf;	 //EKF专用的四元数。
+	QQuaternion m_Qgyro; //角速度计算积分时专用的四元数。
+	Matrix4f m_P;		//ekf的误差协方差矩阵。
+	Matrix4f m_Q;		//ekf过程模型的噪声方差矩阵。
+	Matrix3f m_V;		//噪声对四元数的导数？
+	Matrix3f m_R;
 protected:
 	void paintEvent(QPaintEvent* event);
 
 private:
 	QTextBrowser* m_pTextBrowser;
 	QCheckBox* cbXAccel, *cbYAccel, *cbZAccel, *cbZeroPadAccel, *cbUnitAccel, *cbXGyro, *cbYGyro, *cbZGyro, *cbZeroPadGyro, *cbUnitGyro;
+
+	QTextBrowser *m_pStateBrowser, *m_pKKBrowser, *m_pHKBrowser, *m_pPBrowser;
 
 	QCustomPlot* m_gyro;
 	QCustomPlot* m_accel;
@@ -100,6 +141,7 @@ private:
 	QCustomPlot* m_attitude_gyro;
 	QCustomPlot* m_attitude_com_filter;
 	QCustomPlot* m_attitude_mixed;
+	QCustomPlot* m_attitude_ekf;
 	
 	QTabWidget* m_pTabWidget;
 	QWidget* m_pCalibrationPage;
@@ -126,6 +168,7 @@ private:
 	QTimer zeropad_timer;
 	QTimer dtAttitude_accel;
 	QTimer dtAttitude_gyro;
+	QTimer dtAttitude_ekf;
 	QTimer dtAttitude_com;
 	QTimer dtAttitude_mixed;
 	ZeroPadding zeropad;
@@ -140,6 +183,8 @@ private:
 	Vector3f bg;
 	Vector3f bg_;	//用于收集。
 
+	std::vector<Original_Data> m_vecCollectData;
+
 	NewtonCalibration* m_pCalibration;
 	MatrixXf X;
 	MatrixXf X_sixSide;
@@ -148,8 +193,12 @@ private:
 	bool m_bCollect4Calibrate;
 	bool m_bGyroCalibrate;
 	bool m_bAverage4sixside;
+	bool m_bEnableEKFFilter;
+	bool m_bCollectingData;		//收集离线数据用于卡尔曼滤波
+
 	CALIBRATION_SIDE m_side;
 	CALIBRATION_TYPE m_type;
+	ESTIMATION_WAY m_estimation_way;
 	static float g;
 };
 

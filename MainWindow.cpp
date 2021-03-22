@@ -38,6 +38,9 @@ GroundStation::GroundStation(QWidget* parent)
 	, m_pTabWidget(NULL)
 	, m_pCalibrationPage(NULL)
 	, m_pAttitudePage(NULL)
+	, m_estimation_way(NONE)
+	, m_bEnableEKFFilter(false)
+	, m_bCollectingData(false)
 {
 	init();
 }
@@ -55,13 +58,17 @@ void GroundStation::init()
 
 	QWidget* pCalibrationPage = initCalibrationPage();
 	QWidget* pAttitudePage = initAttitudePage();
+	QWidget* pEKFPage = initEKFPage();
 	pTabWidget->addTab(pCalibrationPage, u8"传感器标定");
 	pTabWidget->addTab(pAttitudePage, u8"姿态解算");
+	pTabWidget->addTab(pEKFPage, u8"扩展卡尔曼滤波");
+	pTabWidget->setCurrentIndex(2);
 
 	initCalibrationPlot();
 	initAttitudePlot();
 	initPort();
 	initParameters();
+	initMatrix();
 
 	setCentralWidget(pTabWidget);
 	resize(1304, 691);
@@ -147,6 +154,83 @@ QWidget* GroundStation::initAttitudePage()
 #endif
 
 	pPage->setLayout(pGridLayout);
+	return pPage;
+}
+
+QWidget* GroundStation::initEKFPage()
+{
+	QWidget* pPage = new QWidget;
+	QHBoxLayout* pHBoxLayout = new QHBoxLayout;
+	QVBoxLayout* pRightSide = new QVBoxLayout;
+
+	m_attitude_ekf = new QCustomPlot(pPage);
+	m_attitude_ekf->setMinimumWidth(800);
+
+	m_pStateBrowser = new QTextBrowser(pPage);
+	m_pKKBrowser = new QTextBrowser(pPage);
+	m_pHKBrowser = new QTextBrowser(pPage);
+	m_pPBrowser = new QTextBrowser(pPage);
+
+	QPushButton* pBtn = new QPushButton(pPage);
+	pBtn->setText(u8"开始滤波");
+	QObject::connect(pBtn, &QPushButton::clicked, [=]() {
+			m_bEnableEKFFilter = true;
+			//estimateByEKFOffline();
+		});
+
+	QPushButton* pCollectBtn = new QPushButton(pPage);
+	pCollectBtn->setText(u8"收集数据");
+	QObject::connect(pCollectBtn, &QPushButton::clicked, [=]() {
+			if (m_bCollectingData)
+			{
+				pCollectBtn->setText(u8"开始收集");
+				//写盘。
+				QFile fn("X.txt");
+				fn.open(QIODevice::ReadWrite);
+				for (int i = 0; i < m_vecCollectData.size(); i++)
+				{
+					float ax = m_vecCollectData[i].ax, ay = m_vecCollectData[i].ay, az = m_vecCollectData[i].az,
+						gx = m_vecCollectData[i].gx, gy = m_vecCollectData[i].gy, gz = m_vecCollectData[i].gz;
+					QString line = QString("%1, %2, %3, %4, %5, %6\n").arg(ax).arg(ay).arg(az).arg(gx).arg(gy).arg(gz);
+					fn.write(line.toUtf8());
+				}
+				fn.close();
+				m_vecCollectData.clear();
+				m_bCollectingData = false;
+			}
+			else
+			{
+				pCollectBtn->setText(u8"停止收集");
+				m_bCollectingData = true;
+			}
+		});
+
+	//QAction* playAct = new QAction(QIcon(":/images/play_btn.png"), tr("&Run"), pPage);
+	//playAct->setCheckable(true);
+	//playAct->setStatusTip(tr("Run physics"));
+
+	pRightSide->addWidget(pBtn);
+	pRightSide->addWidget(pCollectBtn);
+	pRightSide->addStretch();
+
+	pRightSide->addWidget(new QLabel(u8"当前状态：", pPage));
+	pRightSide->addWidget(m_pStateBrowser);
+
+	pRightSide->addWidget(new QLabel(u8"增益矩阵Kk：", pPage));
+	pRightSide->addWidget(m_pKKBrowser);
+
+	pRightSide->addWidget(new QLabel(u8"H矩阵：", pPage));
+	pRightSide->addWidget(m_pHKBrowser);
+
+	pRightSide->addWidget(new QLabel(u8"误差协方差矩阵：", pPage));
+	pRightSide->addWidget(m_pPBrowser);
+
+	pHBoxLayout->addWidget(m_attitude_ekf);
+	pHBoxLayout->addStretch();
+	pHBoxLayout->addLayout(pRightSide);
+	pHBoxLayout->addStretch();
+
+	pPage->setLayout(pHBoxLayout);
 	return pPage;
 }
 
@@ -319,6 +403,20 @@ void GroundStation::initAttitudePlot()
 		connect(m_attitude_mixed->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_mixed->yAxis2, SLOT(setRange(QCPRange)));
 		connect(&dtAttitude_mixed, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
 	}
+	if (m_attitude_ekf)
+	{
+		m_attitude_ekf->yAxis->setRange(-180, 180);
+		{
+			m_attitude_ekf->addGraph();
+			m_attitude_ekf->graph()->setPen(QPen(Qt::blue));
+			m_attitude_ekf->addGraph();
+			m_attitude_ekf->graph()->setPen(QPen(Qt::red));
+
+			connect(m_attitude_ekf->xAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_ekf->xAxis2, SLOT(setRange(QCPRange)));
+			connect(m_attitude_ekf->yAxis, SIGNAL(rangeChanged(QCPRange)), m_attitude_ekf->yAxis2, SLOT(setRange(QCPRange)));
+			connect(&dtAttitude_ekf, SIGNAL(timeout()), this, SLOT(MyRealtimeDataSlot()));
+		}
+	}
 }
 
 void GroundStation::initParameters()
@@ -351,6 +449,7 @@ void GroundStation::initParameters()
 	bg << 1.76019275f, 0.981384218f, 0.419433594f;
 	//bg << 0, 0, 0;
 	bg_ << 0, 0, 0;
+	m_qk << 1, 0, 0, 0;
 }
 
 void GroundStation::MyRealtimeDataSlot()
@@ -395,6 +494,11 @@ void GroundStation::MyRealtimeDataSlot()
 		m_attitude_mixed->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
 		m_attitude_mixed->replot(QCustomPlot::rpQueuedReplot);
 	}
+	if (m_attitude_ekf)
+	{
+		m_attitude_ekf->xAxis->setRange(m_currIdx, 1000, Qt::AlignRight);
+		m_attitude_ekf->replot(QCustomPlot::rpQueuedReplot);
+	}
 }
 
 void GroundStation::setButtonIcon(int)
@@ -428,6 +532,138 @@ QQuaternion Quaternion_RungeKutta4(QQuaternion q0, Vector3f w)
 	QQuaternion q = q0 + T / 6.0 * (K1 + 2 * K2 + 2 * K3 + K4);
 	q = q.normalized();
 	return q;
+}
+
+Angular_Pos GroundStation::EstimateByAccel(float ax, float ay, float az)
+{
+	//1.角速度积分得到的姿态。
+	float pitch_a = asin(BOUND_ABS_ONE(-ax)) * fRad2Deg;
+	float roll_a = atan(ay / az) * fRad2Deg;
+	return Angular_Pos(pitch_a, roll_a, 0);
+}
+
+Angular_Pos GroundStation::EstimateByGyro(float gx, float gy, float gz)
+{
+	float wx = gx * fDeg2Rad;
+	float wy = gy * fDeg2Rad;
+	float wz = gz * fDeg2Rad;
+
+	Vector3f w(wx, wy, wz);
+	float pitch_g = asin(BOUND_ABS_ONE(2 * (m_Qgyro.scalar() * m_Qgyro.y() - m_Qgyro.x() * m_Qgyro.z()))) * fRad2Deg;
+	float roll_g = atan2(2 * m_Qgyro.y() * m_Qgyro.z() + 2 * m_Qgyro.scalar() * m_Qgyro.x(),
+		-2 * m_Qgyro.x() * m_Qgyro.x() - 2 * m_Qgyro.y() * m_Qgyro.y() + 1) * fRad2Deg;
+	m_Qgyro = Quaternion_RungeKutta4(m_Qgyro, w);
+	return Angular_Pos(pitch_g, roll_g, 0);
+}
+
+QQuaternion GroundStation::MatrixDotQ(QMatrix4x4 M, QQuaternion q)
+{
+	QVector4D qv(q.scalar(), q.x(), q.y(), q.z());	//q直接转4元数，第一个数在最后
+	QVector4D result = M * qv;
+	return QQuaternion(result[0], result[1], result[2], result[3]);
+}
+
+Angular_Pos GroundStation::EstimateByComplementry(float ax, float ay, float az, float gx, float gy, float gz)
+{
+	const float factor = 0.9f;
+	static float Ts = 0.01f;
+	
+	float wx = gx * fDeg2Rad;
+	float wy = gy * fDeg2Rad;
+	float wz = gz * fDeg2Rad;
+
+	Angular_Pos pos_accel = EstimateByAccel(ax, ay, az);
+	
+	pitch_com = factor * (pitch_com + Ts * wy) + (1 - factor) * pos_accel.pitch;
+	roll_com = factor * (roll_com + Ts * wx) + (1 - factor) * pos_accel.roll;
+	return Angular_Pos(pitch_com, roll_com, 0);
+}
+
+void GroundStation::initMatrix()
+{
+	m_Q = 0.000001 * Matrix4f::Identity();
+	m_R = 2 * Matrix3f::Identity();
+	m_P << 0.125f, 0.0003f, 0.0003f, 0.0003f,
+		0.0003f, 0.125f, 0.0003f, 0.0003f,
+		0.0003f, 0.0003f, 0.125f, 0.0003f,
+		0.0003f, 0.0003f, 0.0003f, 0.125f;
+	m_P = 1 * m_P;
+	m_V = Matrix3f::Identity();
+}
+
+void GroundStation::estimateByEKFOffline()
+{
+	//读取离线数据。
+	QFile fn("X.txt");
+	fn.open(QIODevice::ReadOnly);
+	QByteArray buffer = fn.readAll();
+	QByteArrayList list = buffer.split('\n');
+	int n = list.size();
+	for (int i = 0; i < list.size(); i++)
+	{
+		QByteArrayList pairs = list[i].split(',');
+		float ax = pairs[0].toFloat(), ay = pairs[1].toFloat(), az = pairs[2].toFloat(),
+			gx = pairs[3].toFloat(), gy = pairs[4].toFloat(), gz = pairs[5].toFloat();
+		Angular_Pos pos_ekf = EstimateByEKF(ax, ay, az, gx, gy, gz);
+	}
+}
+
+Vector4f normalize_quaternion(Vector4f v)
+{
+	float len = v.norm();
+	return v / len;
+}
+
+Angular_Pos GroundStation::EstimateByEKF(float ax, float ay, float az, float gx, float gy, float gz)
+{
+	float wx = gx * fDeg2Rad, wy = gy * fDeg2Rad, wz = gz * fDeg2Rad;	//论文说以度数为单位。
+	float q0 = m_qk(0), q1 = m_qk(1), q2 = m_qk(2), q3 = m_qk(3);
+
+	//m_pStateBrowser->append(QString("q0:%1  q1:%2  q2:%3  q3:%4").arg(m_qekf.scalar()).arg(m_qekf.x()).arg(m_qekf.y()).arg(m_qekf.z()));
+	Matrix4f Wx;
+	Wx << 0., -wx, -wy, -wz,
+		wx, 0, wz, -wy,
+		wy, -wz, 0, wx,
+		wz, wy, -wx, 0;
+
+	Matrix4f Pk_1 = m_P;
+	Matrix4f Qk = m_Q;
+
+	Matrix4f I = Matrix4f::Identity();
+	Matrix4f Ak = (I + 1./2 * T * Wx);
+	Vector4f q_k_minus_1 = m_qk;
+	Vector4f q_k_ = Ak * q_k_minus_1;
+	q_k_ = normalize_quaternion(q_k_);
+	Matrix4f Pk_ = Ak * Pk_1 * Ak.transpose() + Qk;		//先验的误差协方差矩阵。
+
+	Matrix<float, 3, 4> Hk;
+	Hk << -2*q2, 2*q3, -2*q0, 2*q1,
+			2*q1, 2*q0, 2*q3, 2*q2,
+			2*q0, -2*q1, -2*q2, 2*q3;
+
+	Matrix3f det;	//倒数那部分
+	det = Hk * Pk_ * Hk.transpose() + m_V * m_R * m_V.transpose();
+
+	Matrix<float, 4, 3> Kk = Pk_ * Hk.transpose() * det.inverse();
+
+	Vector3f zk(ax, ay, az);
+	//k时刻观察项的估计。
+	Vector3f h1_qk_(2*q1*q3-2*q0*q2, 2*q0*q1+2*q2*q3, q0*q0-q1*q1-q2*q2+q3*q3);
+
+	//状态更新
+	Vector4f obs_e = Kk * (zk - h1_qk_);
+	obs_e(3) = 0;
+	Vector4f qk = q_k_ + obs_e;
+	m_qk = normalize_quaternion(qk);
+
+	// 更新Pk
+	m_P = (I - Kk * Hk) * Pk_;
+
+	float pitch = asin(BOUND_ABS_ONE(2 * (m_qk(0) * m_qk(2) - m_qk(1) * m_qk(3)))) * fRad2Deg;
+	float roll = atan2(2 * m_qk(2) * m_qk(3) + 2 * m_qk(0) * m_qk(1),
+		-2 * m_qk(1) * m_qk(1) - 2 * m_qk(2) * m_qk(2) + 1) * fRad2Deg;
+
+	return Angular_Pos(pitch, roll, 0);
 }
 
 void GroundStation::onCustomCOMRead()
@@ -482,45 +718,44 @@ void GroundStation::onCustomCOMRead()
 
 			m_pTextBrowser->append(QString("%1, %2, %3, %4, %5, %6\n").arg(a_calibrated(0)).arg(a_calibrated(1)).arg(a_calibrated(2)).arg(g_calibrated(0)).arg(g_calibrated(1)).arg(g_calibrated(2)));
 
+			float ax = a_calibrated(0), ay = a_calibrated(1), az = a_calibrated(2);
+			float gx = g_calibrated(0), gy = g_calibrated(1), gz = g_calibrated(2);
+			Angular_Pos pos_a, pos_g, pos_com, pos_ekf;
+
 			//1.角速度积分得到的姿态。
-			float pitch_a = asin(BOUND_ABS_ONE(a_calibrated(0))) * fRad2Deg;
-			float roll_a = atan(a_calibrated(1) / a_calibrated(2)) * fRad2Deg;
+			pos_a = EstimateByAccel(ax, ay, az);
 
 			//2.角速度积分得到的姿态。
-			float wx = g_calibrated(0) * fDeg2Rad;
-			float wy = g_calibrated(1) * fDeg2Rad;
-			float wz = g_calibrated(2) * fDeg2Rad;
-
-			Vector3f w(wx, wy, wz);
-			//里面的项是取反的，不知道为什么要取反才能使得pitch和加速度估计的正负性相同。
-			float pitch_g = asin(BOUND_ABS_ONE(-2 * (m_Q.scalar() * m_Q.y() - m_Q.x() * m_Q.z()))) * fRad2Deg;
-			float roll_g = atan2(2 * m_Q.y() * m_Q.z() + 2 * m_Q.scalar() * m_Q.x(), 
-								-2 * m_Q.x() * m_Q.x() - 2 * m_Q.y() * m_Q.y() + 1) * fRad2Deg;
-			m_Q = Quaternion_RungeKutta4(m_Q, w);
+			pos_g = EstimateByGyro(gx, gy, gz);
 
 			//3.互补滤波得到的姿态。
-			const float factor = 0.9f;
-			static float Ts = 0.01f;
-			pitch_com = factor * (pitch_com + Ts * wy) + (1 - factor) * pitch_a;
-			roll_com = factor * (roll_com + Ts * wx) + (1 - factor) * roll_a;
+			pos_com = EstimateByComplementry(ax, ay, az, gx, gy, gz);
 
-			m_accel->graph(0)->addData(m_currIdx, a_calibrated(0));
-			m_accel->graph(1)->addData(m_currIdx, a_calibrated(1));
-			m_accel->graph(2)->addData(m_currIdx, a_calibrated(2));
+			if (m_bEnableEKFFilter)
+				pos_ekf = EstimateByEKF(ax, ay, az, gx, gy, gz);
+
+			m_accel->graph(0)->addData(m_currIdx, ax);
+			m_accel->graph(1)->addData(m_currIdx, ay);
+			m_accel->graph(2)->addData(m_currIdx, az);
 
 #ifdef PLOT_ONLY_MIXED
-			m_attitude_mixed->graph(0)->addData(m_currIdx, pitch_a);
-			m_attitude_mixed->graph(1)->addData(m_currIdx, roll_a);
-			m_attitude_mixed->graph(2)->addData(m_currIdx, pitch_com);
-			m_attitude_mixed->graph(3)->addData(m_currIdx, roll_com);
+			m_attitude_mixed->graph(0)->addData(m_currIdx, pos_a.pitch);
+			m_attitude_mixed->graph(1)->addData(m_currIdx, pos_a.roll);
+			m_attitude_mixed->graph(2)->addData(m_currIdx, pos_com.pitch);
+			m_attitude_mixed->graph(3)->addData(m_currIdx, pos_com.roll);
 #else
-			m_attitude_accel->graph(0)->addData(m_currIdx, pitch_a);
-			m_attitude_accel->graph(1)->addData(m_currIdx, roll_a);
-			m_attitude_gyro->graph(0)->addData(m_currIdx, pitch_g);
-			m_attitude_gyro->graph(1)->addData(m_currIdx, roll_g);
-			m_attitude_com_filter->graph(0)->addData(m_currIdx, pitch_com);
-			m_attitude_com_filter->graph(1)->addData(m_currIdx, roll_com);
+			m_attitude_accel->graph(0)->addData(m_currIdx, pos_a.pitch);
+			m_attitude_accel->graph(1)->addData(m_currIdx, pos_a.roll);
+			m_attitude_gyro->graph(0)->addData(m_currIdx, pos_g.pitch);
+			m_attitude_gyro->graph(1)->addData(m_currIdx, pos_g.roll);
+			m_attitude_com_filter->graph(0)->addData(m_currIdx, pos_com.pitch);
+			m_attitude_com_filter->graph(1)->addData(m_currIdx, pos_com.roll);
 #endif
+			if (m_bEnableEKFFilter)
+			{
+				m_attitude_ekf->graph(0)->addData(m_currIdx, pos_ekf.pitch);
+				m_attitude_ekf->graph(1)->addData(m_currIdx, pos_ekf.roll);
+			}
 
 			if (m_bCollect4Calibrate)
 			{
@@ -537,6 +772,10 @@ void GroundStation::onCustomCOMRead()
 					m_idxX = 0;
 					emit calibrationReady(X);
 				}
+			}
+			if (m_bCollectingData)
+			{
+				m_vecCollectData.push_back(Original_Data(ax, ay, az, gx, gy, gz));
 			}
 			if (m_bGyroCalibrate)
 			{
